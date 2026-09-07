@@ -6,6 +6,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -91,7 +94,7 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
     val cellWidthPx = with(density) { cellWidth.toPx() }
     val leftColWidth = 180.dp
     val headerHeight = 64.dp
-    val rowHeight = 56.dp
+    val rowHeight = 64.dp
     val borderColor = Color(0xFFE0E0E0)
     
     // Jump to Today logic
@@ -199,8 +202,66 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
 
                 Divider(color = borderColor, thickness = 1.dp)
 
-                // Excel-style Grid Area
-                Box(modifier = Modifier.fillMaxSize()) {
+                if (searchQuery.isNotBlank()) {
+                    // Search View Mode: Dense list of matched students with horizontal scrollable badges
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(filteredStudents) { student ->
+                            val studentRecords = attendance.filter { it.studentId == student.id }.sortedByDescending { it.date }
+                            
+                            ElevatedCard(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
+                                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(student.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                    Text(student.rollNumber, color = Color.Gray, style = MaterialTheme.typography.bodyMedium)
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    
+                                    if (studentRecords.isEmpty()) {
+                                        Text("No attendance records found.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                    } else {
+                                        LazyRow(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            items(studentRecords) { record ->
+                                                val status = record.status
+                                                val badgeColor = when (status) { "P" -> Color(0xFF4CAF50); "A" -> Color(0xFFF44336); "L" -> Color(0xFFFF9800); else -> Color.Gray }
+                                                val recordDate = LocalDate.parse(record.date, DateTimeFormatter.ISO_LOCAL_DATE)
+                                                
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                    val formattedDate = recordDate.format(DateTimeFormatter.ofPattern(
+                                                        if (recordDate.year == LocalDate.now().year) "dd MMM" else "dd MMM ''yy"
+                                                    ))
+                                                    Text(
+                                                        text = formattedDate,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Light,
+                                                        color = Color.Gray,
+                                                        modifier = Modifier.padding(bottom = 4.dp)
+                                                    )
+                                                    Surface(shape = CircleShape, color = badgeColor.copy(alpha = 0.15f), modifier = Modifier.size(32.dp)) {
+                                                        Box(contentAlignment = Alignment.Center) {
+                                                            Text(status, color = badgeColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Excel-style Grid Area
+                    Box(modifier = Modifier.fillMaxSize()) {
                     
                     // 1. Bottom-Right (Main Scrollable Grid)
                     Box(
@@ -235,9 +296,22 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                                             // Status Badge
                                             if (status != null) {
                                                 val badgeColor = when (status) { "P" -> Color(0xFF4CAF50); "A" -> Color(0xFFF44336); "L" -> Color(0xFFFF9800); else -> Color.Gray }
-                                                Surface(shape = CircleShape, color = badgeColor.copy(alpha = 0.15f), modifier = Modifier.size(28.dp)) {
-                                                    Box(contentAlignment = Alignment.Center) {
-                                                        Text(status, color = badgeColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                                                    val formattedDate = date.format(DateTimeFormatter.ofPattern(
+                                                        if (date.year == LocalDate.now().year) "dd MMM" else "dd MMM ''yy"
+                                                    ))
+                                                    Text(
+                                                        text = formattedDate,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Light,
+                                                        color = Color.Gray,
+                                                        modifier = Modifier.padding(bottom = 2.dp)
+                                                    )
+                                                    Surface(shape = CircleShape, color = badgeColor.copy(alpha = 0.15f), modifier = Modifier.size(28.dp)) {
+                                                        Box(contentAlignment = Alignment.Center) {
+                                                            Text(status, color = badgeColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                                                        }
                                                     }
                                                 }
                                             }
@@ -368,7 +442,8 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                             Text("Att %", fontWeight = FontWeight.Bold, color = Color.DarkGray, style = MaterialTheme.typography.labelMedium)
                         }
                     }
-                }
+                } // End Box (Excel Grid)
+                } // End if/else
             }
         }
     }

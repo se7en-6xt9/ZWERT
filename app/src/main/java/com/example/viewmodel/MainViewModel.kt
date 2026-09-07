@@ -24,12 +24,12 @@ import kotlinx.coroutines.tasks.await
 import java.time.LocalDate
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
-    private val auth = FirebaseAuth.getInstance()
-    private val firestore = FirebaseFirestore.getInstance()
+    private val auth by lazy { FirebaseAuth.getInstance() }
+    private val firestore by lazy { FirebaseFirestore.getInstance() }
 
     private val repository: Repository
         get() {
-            val userId = auth.currentUser?.uid ?: "default_user"
+            val userId = try { auth.currentUser?.uid ?: "default_user" } catch (e: Exception) { "default_user" }
             val dao = AppDatabase.getDatabase(getApplication(), userId).appDao()
             return Repository(dao)
         }
@@ -37,7 +37,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isFaculty = MutableStateFlow(true)
     val isFaculty: StateFlow<Boolean> = _isFaculty.asStateFlow()
 
-    private val _authState = MutableStateFlow(auth.currentUser != null)
+    private val _authState = MutableStateFlow(false)
+    init {
+        try {
+            _authState.value = auth.currentUser != null
+        } catch (e: Exception) {
+            Log.e("MainViewModel", "Firebase not initialized", e)
+        }
+    }
     val authState: StateFlow<Boolean> = _authState.asStateFlow()
 
     private val _currentUserEmail = MutableStateFlow(auth.currentUser?.email ?: "")
