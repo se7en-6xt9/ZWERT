@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
         
         // Initialize Firebase
         try {
-            FirebaseApp.initializeApp(this)
+            FirebaseApp.initializeApp(applicationContext)
             val db: FirebaseFirestore = FirebaseFirestore.getInstance()
         } catch (e: Exception) {
             e.printStackTrace()

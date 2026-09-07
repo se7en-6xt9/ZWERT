@@ -2,7 +2,7 @@ package com.example.ui.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -56,11 +56,23 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
     val presentCount = attendanceRecords.count { it.status == "P" }
     val absentCount = attendanceRecords.count { it.status == "A" }
     val lateCount = attendanceRecords.count { it.status == "L" }
-    val remainingCount = students.size - attendanceRecords.size
+    val totalCount = students.size
+    val markedCount = presentCount + absentCount + lateCount
     
     var quizExpanded by remember { mutableStateOf(false) }
 
-    // White theme wrapper
+    // Animated states for stats
+    val animPresent by animateIntAsState(presentCount, label = "present")
+    val animAbsent by animateIntAsState(absentCount, label = "absent")
+    val animLate by animateIntAsState(lateCount, label = "late")
+    val animMarked by animateIntAsState(markedCount, label = "marked")
+    val animTotal by animateIntAsState(totalCount, label = "total")
+    val animProgress by animateFloatAsState(if (totalCount == 0) 0f else markedCount.toFloat() / totalCount, label = "progress")
+
+    // Entrance animation state
+    var isVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { isVisible = true }
+
     MaterialTheme(
         colorScheme = lightColorScheme(
             primary = Color(0xFF6750A4),
@@ -71,19 +83,10 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
     ) {
         Scaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
-            containerColor = Color.White,
+            containerColor = Color(0xFFFAFAFA), // slightly off-white for contrast with cards
             topBar = {
                 TopAppBar(
-                    title = {
-                        Column {
-                            Text(course?.name ?: "Attendance Register", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, color = Color.Black)
-                            Text(
-                                "${slot?.startTime ?: ""} - ${slot?.endTime ?: ""} • Room: ${slot?.room ?: ""}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.DarkGray
-                            )
-                        }
-                    },
+                    title = { Text("Take Attendance", fontWeight = FontWeight.Bold, color = Color.Black) },
                     navigationIcon = {
                         IconButton(onClick = { navController.popBackStack() }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.Black)
@@ -91,156 +94,180 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                     },
                     actions = {
                         IconButton(onClick = {
-                            course?.id?.let {
-                                navController.navigate("attendance_report/$it")
-                            }
+                            course?.id?.let { navController.navigate("attendance_report/$it") }
                         }) {
                             Icon(Icons.Default.Assessment, contentDescription = "Report", tint = Color.Black)
                         }
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFFFAFAFA))
                 )
             }
         ) { paddingValues ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
+            AnimatedVisibility(
+                visible = isVisible,
+                enter = fadeIn(tween(400)) + slideInVertically(
+                    initialOffsetY = { it / 8 },
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
+                )
             ) {
-                // Top Stats Row
-                Row(
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .fillMaxSize()
+                        .padding(paddingValues)
                 ) {
-                    Text(
-                        text = "$presentCount Present • $absentCount Absent • $remainingCount Remaining",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.DarkGray
-                    )
-                    Text(
-                        text = currentDate,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Color.Gray,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                // Quick Actions
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    FilledTonalButton(
-                        onClick = {
-                            val studentIds = students.map { it.id }
-                            viewModel.markAllStudentsAttendance(currentDate, slotId, studentIds, "P")
-                        },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFFF3F4F6), contentColor = Color.Black),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("Mark All Present", fontWeight = FontWeight.Bold)
-                    }
-                    Button(
-                        onClick = { navController.popBackStack() },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = Color.White),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("Save & Submit", fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                // Main Swipeable List
-                LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    items(students, key = { it.id }) { student ->
-                        val record = attendanceRecords.find { it.studentId == student.id }
-                        val currentStatus = record?.status
-                        
-                        SwipeableAttendanceCard(
-                            student = student,
-                            status = currentStatus,
-                            onSwipeRight = {
-                                viewModel.markAttendance(currentDate, slotId, student.id, "P")
-                                coroutineScope.launch {
-                                    val result = snackbarHostState.showSnackbar("Marked ${student.name} Present", actionLabel = "Undo", duration = SnackbarDuration.Short)
-                                    if (result == SnackbarResult.ActionPerformed) viewModel.markAttendance(currentDate, slotId, student.id, "NONE")
-                                }
-                            },
-                            onSwipeLeft = {
-                                viewModel.markAttendance(currentDate, slotId, student.id, "A")
-                                coroutineScope.launch {
-                                    val result = snackbarHostState.showSnackbar("Marked ${student.name} Absent", actionLabel = "Undo", duration = SnackbarDuration.Short)
-                                    if (result == SnackbarResult.ActionPerformed) viewModel.markAttendance(currentDate, slotId, student.id, "NONE")
-                                }
-                            },
-                            onLateClick = {
-                                viewModel.markAttendance(currentDate, slotId, student.id, "L")
-                            }
-                        )
-                    }
-                }
-
-                // Quiz Attendance Section
-                Column(modifier = Modifier.fillMaxWidth().background(Color(0xFFF9FAFB))) {
-                    Row(
+                    // Proper Session Info Card
+                    Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { quizExpanded = !quizExpanded }
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                        shape = RoundedCornerShape(16.dp)
                     ) {
-                        Icon(Icons.Default.Quiz, contentDescription = "Quiz", tint = Color.DarkGray)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text("Quiz Attendance", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), color = Color.Black)
-                        Icon(if (quizExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = "Expand", tint = Color.Gray)
-                    }
-                    
-                    AnimatedVisibility(visible = quizExpanded) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Text("Mark students who took the quiz:", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                            Spacer(modifier = Modifier.height(12.dp))
-                            // Simple quiz toggle implementation for demo
-                            val quizToggles = remember { mutableStateMapOf<String, Boolean>() }
-                            students.forEach { student ->
-                                val tookQuiz = quizToggles[student.id] ?: false
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 6.dp)
-                                        .clickable { quizToggles[student.id] = !tookQuiz },
-                                    verticalAlignment = Alignment.CenterVertically
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = course?.name ?: "Loading...",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    shape = RoundedCornerShape(8.dp)
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(24.dp)
-                                            .clip(CircleShape)
-                                            .background(if (tookQuiz) Color(0xFF4CAF50) else Color(0xFFE0E0E0)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (tookQuiz) Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                    }
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Text(student.name, fontWeight = FontWeight.Medium, color = Color.Black)
+                                    Text(
+                                        text = course?.code ?: "",
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
                             }
                             Spacer(modifier = Modifier.height(16.dp))
+                            
+                            // Info Grid
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                InfoItem(icon = Icons.Default.Schedule, text = "${slot?.startTime ?: ""} - ${slot?.endTime ?: ""}")
+                                InfoItem(icon = Icons.Default.LocationOn, text = slot?.room ?: "")
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                InfoItem(icon = Icons.Default.CalendarToday, text = LocalDate.now().format(DateTimeFormatter.ofPattern("dd MMM, yyyy")))
+                                InfoItem(icon = Icons.Default.Class, text = "Section ${slot?.section ?: ""}")
+                            }
+                        }
+                    }
+
+                    // Progress Bar
+                    Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Completion", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                            Text("$animMarked of $animTotal Marked", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { animProgress },
+                            modifier = Modifier.fillMaxWidth().height(8.dp).clip(CircleShape),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = Color(0xFFE0E0E0)
+                        )
+                    }
+
+                    // Stats Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        StatCard("Present", animPresent, Color(0xFF4CAF50), Modifier.weight(1f))
+                        StatCard("Absent", animAbsent, Color(0xFFF44336), Modifier.weight(1f))
+                        StatCard("Late", animLate, Color(0xFFFF9800), Modifier.weight(1f))
+                    }
+
+                    // Quick Actions
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = {
+                                val studentIds = students.map { it.id }
+                                viewModel.markAllStudentsAttendance(currentDate, slotId, studentIds, "P")
+                            },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFFE8F5E9), contentColor = Color(0xFF2E7D32)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Mark All Present", fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    // Main Swipeable List
+                    LazyColumn(
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 100.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        items(students, key = { it.id }) { student ->
+                            val record = attendanceRecords.find { it.studentId == student.id }
+                            val currentStatus = record?.status
+                            
+                            SwipeableAttendanceCard(
+                                student = student,
+                                status = currentStatus,
+                                onSwipeRight = {
+                                    viewModel.markAttendance(currentDate, slotId, student.id, "P")
+                                    coroutineScope.launch {
+                                        val result = snackbarHostState.showSnackbar("Marked ${student.name} Present", actionLabel = "Undo", duration = SnackbarDuration.Short)
+                                        if (result == SnackbarResult.ActionPerformed) viewModel.markAttendance(currentDate, slotId, student.id, "NONE")
+                                    }
+                                },
+                                onSwipeLeft = {
+                                    viewModel.markAttendance(currentDate, slotId, student.id, "A")
+                                    coroutineScope.launch {
+                                        val result = snackbarHostState.showSnackbar("Marked ${student.name} Absent", actionLabel = "Undo", duration = SnackbarDuration.Short)
+                                        if (result == SnackbarResult.ActionPerformed) viewModel.markAttendance(currentDate, slotId, student.id, "NONE")
+                                    }
+                                },
+                                onLateClick = {
+                                    viewModel.markAttendance(currentDate, slotId, student.id, "L")
+                                }
+                            )
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun InfoItem(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(18.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+fun StatCard(label: String, value: Int, color: Color, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = color.copy(alpha = 0.1f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.2f))
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(value.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = color)
+            Text(label, style = MaterialTheme.typography.labelSmall, color = Color.DarkGray)
         }
     }
 }
@@ -276,8 +303,8 @@ fun SwipeableAttendanceCard(
         backgroundContent = {
             val direction = dismissState.dismissDirection
             val color = when (direction) {
-                SwipeToDismissBoxValue.StartToEnd -> Color(0xFF4CAF50) // Green for Present
-                SwipeToDismissBoxValue.EndToStart -> Color(0xFFF44336) // Red for Absent
+                SwipeToDismissBoxValue.StartToEnd -> Color(0xFF4CAF50) // Green
+                SwipeToDismissBoxValue.EndToStart -> Color(0xFFF44336) // Red
                 else -> Color.Transparent
             }
             val alignment = when (direction) {
@@ -307,9 +334,9 @@ fun SwipeableAttendanceCard(
         },
         content = {
             val cardBackgroundColor = when (status) {
-                "P" -> Color(0xFFE8F5E9) // Light Green
-                "A" -> Color(0xFFFFEBEE) // Light Red
-                "L" -> Color(0xFFFFF3E0) // Light Orange
+                "P" -> Color(0xFFE8F5E9)
+                "A" -> Color(0xFFFFEBEE)
+                "L" -> Color(0xFFFFF3E0)
                 else -> Color.White
             }
             val borderColor = when (status) {
@@ -323,7 +350,7 @@ fun SwipeableAttendanceCard(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
                 color = cardBackgroundColor,
-                shadowElevation = if (status == null) 2.dp else 0.dp,
+                shadowElevation = if (status == null) 1.dp else 0.dp,
                 border = androidx.compose.foundation.BorderStroke(1.dp, borderColor)
             ) {
                 Row(
@@ -360,14 +387,14 @@ fun SwipeableAttendanceCard(
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = statusColor,
-                            modifier = Modifier.clickable { onLateClick() } // Double click/tap for late? Just simple click here is fine
+                            modifier = Modifier.clickable { onLateClick() } 
                         ) {
                             Text(statusText, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                         }
                     } else {
                         // Late Button Icon
                         IconButton(onClick = onLateClick, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.AccessTime, contentDescription = "Late", tint = Color.Gray, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.AccessTime, contentDescription = "Late", tint = Color.Gray, modifier = Modifier.size(22.dp))
                         }
                     }
                 }
