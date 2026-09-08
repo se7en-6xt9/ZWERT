@@ -99,6 +99,9 @@ class MainActivity : ComponentActivity() {
                         composable("import_timetable") {
                             com.example.ui.screens.ImportTimetableScreen(navController = navController, viewModel = viewModel)
                         }
+                        composable("manage_classes") {
+                            com.example.ui.screens.ManageClassesScreen(navController = navController, viewModel = viewModel)
+                        }
                         composable("attendance_report/{courseId}") { backStackEntry ->
                             val courseId = backStackEntry.arguments?.getString("courseId") ?: return@composable
                             com.example.ui.screens.AttendanceReportScreen(navController = navController, viewModel = viewModel, courseId = courseId)

@@ -37,6 +37,15 @@ interface AppDao {
     @Query("DELETE FROM attendance WHERE date = :date AND scheduleSlotId = :scheduleSlotId AND studentId = :studentId")
     suspend fun deleteAttendance(date: String, scheduleSlotId: String, studentId: String)
 
+    @Query("DELETE FROM courses WHERE id = :courseId")
+    suspend fun deleteCourseById(courseId: String)
+
+    @Query("DELETE FROM students WHERE courseId = :courseId")
+    suspend fun deleteStudentsByCourseId(courseId: String)
+
+    @Query("DELETE FROM schedule_slots WHERE courseId = :courseId")
+    suspend fun deleteScheduleSlotsByCourseId(courseId: String)
+
     @Query("DELETE FROM courses")
     suspend fun wipeCourses()
     @Query("DELETE FROM students")

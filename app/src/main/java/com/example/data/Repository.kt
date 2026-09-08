@@ -2,7 +2,7 @@ package com.example.data
 import com.example.models.UploadData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-class Repository(private val dao: AppDao) {
+class Repository(val dao: AppDao) {
     suspend fun processUploadData(data: UploadData) {
         withContext(Dispatchers.IO) {
             dao.wipeAllData()

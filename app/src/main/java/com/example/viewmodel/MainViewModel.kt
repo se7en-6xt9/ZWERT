@@ -83,6 +83,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun syncDataFromFirebase(onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            val uid = auth?.currentUser?.uid
+            if (uid != null && firestore != null) {
+                try {
+                    val batchesRef = firestore!!.collection("users").document(uid).collection("batches")
+                    val snapshot = batchesRef.get().await()
+                    
+                    val batches = snapshot.documents.mapNotNull { doc ->
+                        doc.toObject(com.example.data.BatchImport::class.java)?.copy(batchId = doc.id)
+                    }
+                    
+                    if (batches.isNotEmpty()) {
+                        repository.wipeAllData() // Wipe old local data before sync
+                        val importData = com.example.data.ImportTimetableData(teacher = null, batches = batches)
+                        repository.processTimetableImport(importData)
+                        Log.d("FirebaseSync", "Synced ${batches.size} batches from Firestore")
+                    } else {
+                        Log.d("FirebaseSync", "No batches found on Firestore for this user")
+                    }
+                } catch (e: Exception) {
+                    Log.e("FirebaseSync", "Sync failed: ${e.message}")
+                }
+            }
+            onComplete()
+        }
+    }
+
     fun signInWithGoogleToken(idToken: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
@@ -93,7 +121,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val credential = GoogleAuthProvider.getCredential(idToken, null)
                 currentAuth.signInWithCredential(credential).await()
-                onSuccess()
+                syncDataFromFirebase {
+                    onSuccess()
+                }
             } catch (e: Throwable) {
                 Log.e("Auth", "Google sign-in failed", e)
                 onError(e.message ?: "Authentication failed")
@@ -239,6 +269,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun deleteCourse(courseId: String, onComplete: () -> Unit, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val currentAuth = auth
+                val currentFirestore = firestore
+                val uid = currentAuth?.currentUser?.uid
+
+                if (currentFirestore != null && uid != null) {
+                    Log.d("FirebaseSync", "Deleting course: $courseId from Firestore")
+                    currentFirestore.collection("users").document(uid)
+                        .collection("batches").document(courseId).delete().await()
+                }
+
+                // Delete locally
+                repository.dao.deleteCourseById(courseId)
+                repository.dao.deleteStudentsByCourseId(courseId)
+                repository.dao.deleteScheduleSlotsByCourseId(courseId)
+                
+                onComplete()
+            } catch (e: Throwable) {
+                Log.e("FirebaseSync", "Failed to delete course: ${e.message}")
+                onError("Failed to delete class: ${e.message}")
+            }
+        }
+    }
+
+    fun getAllCourses() = repository.dao.getAllCourses()
     fun getScheduleForDay(day: String) = repository.getScheduleForDay(day)
     fun getTodayScheduleSync() = repository.getScheduleForDay(LocalDate.now().dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH))
     suspend fun getCourseById(courseId: String) = repository.getCourseById(courseId)

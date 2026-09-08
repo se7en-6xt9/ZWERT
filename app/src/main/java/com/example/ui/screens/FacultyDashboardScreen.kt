@@ -561,10 +561,17 @@ fun ExpandableFAB(navController: NavController) {
                 ) {
                     Icon(Icons.Default.Upload, "Import Timetable")
                 }
-                SmallFloatingActionButton(onClick = {}, containerColor = MaterialTheme.colorScheme.secondaryContainer) {
+                SmallFloatingActionButton(
+                    onClick = { navController.navigate("manage_classes") },
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                ) {
                     Icon(Icons.Default.Edit, "Edit")
                 }
-                SmallFloatingActionButton(onClick = {}, containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.error) {
+                SmallFloatingActionButton(
+                    onClick = { navController.navigate("manage_classes") },
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.error
+                ) {
                     Icon(Icons.Default.Delete, "Delete")
                 }
             }
