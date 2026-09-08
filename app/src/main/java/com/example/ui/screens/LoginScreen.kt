@@ -140,7 +140,11 @@ fun LoginScreen(
                     } catch (e: GetCredentialException) {
                         isSigningIn = false
                         Log.e("LoginScreen", "GetCredentialException", e)
-                        snackbarHostState.showSnackbar("Google Sign-In failed or was cancelled.")
+                        if (e is androidx.credentials.exceptions.NoCredentialException) {
+                            snackbarHostState.showSnackbar("No Google account found on device. Please use a demo account below.")
+                        } else {
+                            snackbarHostState.showSnackbar("Google Sign-In failed or was cancelled.")
+                        }
                     }
                 }
             },
