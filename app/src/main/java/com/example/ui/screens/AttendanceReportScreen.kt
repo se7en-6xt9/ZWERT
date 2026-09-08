@@ -217,17 +217,22 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                                 colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
                                 elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
                             ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Text(student.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                                    Text(student.rollNumber, color = Color.Gray, style = MaterialTheme.typography.bodyMedium)
-                                    Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                                        Text(student.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(student.rollNumber, color = Color.Gray, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
                                     
                                     if (studentRecords.isEmpty()) {
-                                        Text("No attendance records found.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                        Text("No records", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                                     } else {
                                         LazyRow(
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            verticalAlignment = Alignment.CenterVertically
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1.5f, fill = true)
                                         ) {
                                             items(studentRecords) { record ->
                                                 val status = record.status
@@ -242,7 +247,7 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                                                         text = formattedDate,
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Light,
+                                                        fontWeight = FontWeight.Medium,
                                                         color = Color.Gray,
                                                         modifier = Modifier.padding(bottom = 4.dp)
                                                     )
