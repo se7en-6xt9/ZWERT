@@ -27,6 +27,7 @@ import com.example.viewmodel.MainViewModel
 @Composable
 fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
     val email by viewModel.currentUserEmail.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
     var showWipeDialog by remember { mutableStateOf(false) }
 
     if (showWipeDialog) {
@@ -38,11 +39,16 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                 Button(
                     onClick = {
                         showWipeDialog = false
-                        viewModel.wipeAllMyData {
-                            navController.navigate("faculty_dashboard") {
-                                popUpTo(0)
+                        viewModel.wipeAllMyData(
+                            onComplete = {
+                                navController.navigate("faculty_dashboard") {
+                                    popUpTo(0)
+                                }
+                            },
+                            onError = { error ->
+                                android.widget.Toast.makeText(context, error, android.widget.Toast.LENGTH_LONG).show()
                             }
-                        }
+                        )
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
