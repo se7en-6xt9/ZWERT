@@ -53,7 +53,20 @@ jobs:
                     "package_name": "com.aistudio.attentis.rndm"
                   }
                 },
-                "oauth_client": [],
+                "oauth_client": [
+                  {
+                    "client_id": "89592870844-7bgbi776ps16o4md8lbeods7n3fei5ur.apps.googleusercontent.com",
+                    "client_type": 1,
+                    "android_info": {
+                      "package_name": "com.aistudio.attentis.rndm",
+                      "certificate_hash": "46faf0a0a1b044c99b6f46d1001cdc94b8d10514"
+                    }
+                  },
+                  {
+                    "client_id": "89592870844-1o0deo6o95stpf3j6c16oqdbkh052pb8.apps.googleusercontent.com",
+                    "client_type": 3
+                  }
+                ],
                 "api_key": [
                   {
                     "current_key": "AIzaSyCW2mwKGlghZp3ROvg30T-1j5PggWVfVa4"
@@ -61,7 +74,12 @@ jobs:
                 ],
                 "services": {
                   "appinvite_service": {
-                    "other_platform_oauth_client": []
+                    "other_platform_oauth_client": [
+                      {
+                        "client_id": "89592870844-1o0deo6o95stpf3j6c16oqdbkh052pb8.apps.googleusercontent.com",
+                        "client_type": 3
+                      }
+                    ]
                   }
                 }
               }
@@ -86,8 +104,12 @@ jobs:
 
       - name: Generate debug keystore if missing
         run: |
-          if [ ! -f "debug.keystore" ]; then
+          if [ -f "github.keystore" ]; then
+            cp github.keystore debug.keystore
+            echo "Used stable github.keystore for signing."
+          elif [ ! -f "debug.keystore" ]; then
             keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "C=US, O=Android, CN=Android Debug"
+            echo "Generated a temporary keystore (Google Sign-In might fail if SHA-1 is not registered)."
           fi
 
       - name: Build Debug APK
