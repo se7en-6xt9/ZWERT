@@ -27,7 +27,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val auth: FirebaseAuth? by lazy {
         try {
             FirebaseAuth.getInstance()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e("MainViewModel", "FirebaseAuth.getInstance() failed", e)
             null
         }
@@ -35,7 +35,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val firestore: FirebaseFirestore? by lazy {
         try {
             FirebaseFirestore.getInstance()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e("MainViewModel", "FirebaseFirestore.getInstance() failed", e)
             null
         }
@@ -43,7 +43,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: Repository
         get() {
-            val userId = try { auth?.currentUser?.uid ?: "default_user" } catch (e: Exception) { "default_user" }
+            val userId = try { auth?.currentUser?.uid ?: "default_user" } catch (e: Throwable) { "default_user" }
             val dao = AppDatabase.getDatabase(getApplication(), userId).appDao()
             return Repository(dao)
         }
@@ -68,7 +68,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _currentUserEmail.value = firebaseAuth.currentUser?.email ?: ""
                 }
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e("MainViewModel", "Firebase auth initialization/listener failed", e)
         }
     }
@@ -94,7 +94,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val credential = GoogleAuthProvider.getCredential(idToken, null)
                 currentAuth.signInWithCredential(credential).await()
                 onSuccess()
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.e("Auth", "Google sign-in failed", e)
                 onError(e.message ?: "Authentication failed")
             }
@@ -104,7 +104,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun signOut() {
         try {
             auth?.signOut()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e("Auth", "Sign out failed", e)
         }
     }
@@ -130,7 +130,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 onComplete()
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.e("MainViewModel", "Error wiping data", e)
                 onComplete()
             }
@@ -193,7 +193,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (data != null) {
                     repository.processUploadData(data)
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 e.printStackTrace()
             }
         }
@@ -211,7 +211,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     onError("Failed to parse JSON. Please check the format.")
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 onError("Error parsing JSON: ${e.message}")
             }
         }
