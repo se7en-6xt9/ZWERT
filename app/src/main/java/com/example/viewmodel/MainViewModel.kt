@@ -24,12 +24,26 @@ import kotlinx.coroutines.tasks.await
 import java.time.LocalDate
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
-    private val auth by lazy { FirebaseAuth.getInstance() }
-    private val firestore by lazy { FirebaseFirestore.getInstance() }
+    private val auth: FirebaseAuth? by lazy {
+        try {
+            FirebaseAuth.getInstance()
+        } catch (e: Exception) {
+            Log.e("MainViewModel", "FirebaseAuth.getInstance() failed", e)
+            null
+        }
+    }
+    private val firestore: FirebaseFirestore? by lazy {
+        try {
+            FirebaseFirestore.getInstance()
+        } catch (e: Exception) {
+            Log.e("MainViewModel", "FirebaseFirestore.getInstance() failed", e)
+            null
+        }
+    }
 
     private val repository: Repository
         get() {
-            val userId = try { auth.currentUser?.uid ?: "default_user" } catch (e: Exception) { "default_user" }
+            val userId = try { auth?.currentUser?.uid ?: "default_user" } catch (e: Exception) { "default_user" }
             val dao = AppDatabase.getDatabase(getApplication(), userId).appDao()
             return Repository(dao)
         }
@@ -38,22 +52,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isFaculty: StateFlow<Boolean> = _isFaculty.asStateFlow()
 
     private val _authState = MutableStateFlow(false)
-    init {
-        try {
-            _authState.value = auth.currentUser != null
-        } catch (e: Exception) {
-            Log.e("MainViewModel", "Firebase not initialized", e)
-        }
-    }
     val authState: StateFlow<Boolean> = _authState.asStateFlow()
 
-    private val _currentUserEmail = MutableStateFlow(auth.currentUser?.email ?: "")
+    private val _currentUserEmail = MutableStateFlow("")
     val currentUserEmail: StateFlow<String> = _currentUserEmail.asStateFlow()
 
     init {
-        auth.addAuthStateListener { firebaseAuth ->
-            _authState.value = firebaseAuth.currentUser != null
-            _currentUserEmail.value = firebaseAuth.currentUser?.email ?: ""
+        try {
+            val currentAuth = auth
+            if (currentAuth != null) {
+                _authState.value = currentAuth.currentUser != null
+                _currentUserEmail.value = currentAuth.currentUser?.email ?: ""
+                currentAuth.addAuthStateListener { firebaseAuth ->
+                    _authState.value = firebaseAuth.currentUser != null
+                    _currentUserEmail.value = firebaseAuth.currentUser?.email ?: ""
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MainViewModel", "Firebase auth initialization/listener failed", e)
         }
     }
 
@@ -70,8 +86,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun signInWithGoogleToken(idToken: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
+                val currentAuth = auth
+                if (currentAuth == null) {
+                    onError("Firebase Auth is not available on this device.")
+                    return@launch
+                }
                 val credential = GoogleAuthProvider.getCredential(idToken, null)
-                auth.signInWithCredential(credential).await()
+                currentAuth.signInWithCredential(credential).await()
                 onSuccess()
             } catch (e: Exception) {
                 Log.e("Auth", "Google sign-in failed", e)
@@ -81,7 +102,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun signOut() {
-        auth.signOut()
+        try {
+            auth?.signOut()
+        } catch (e: Exception) {
+            Log.e("Auth", "Sign out failed", e)
+        }
     }
     
     fun wipeAllMyData(onComplete: () -> Unit) {
@@ -91,11 +116,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 repository.wipeAllData()
                 
                 // 2. Wipe Firestore data (if any exists) for this user
-                val userId = auth.currentUser?.uid
-                if (userId != null) {
+                val currentAuth = auth
+                val currentFirestore = firestore
+                val userId = currentAuth?.currentUser?.uid
+                if (currentFirestore != null && userId != null) {
                     val collections = listOf("batches", "students", "attendance")
                     for (collection in collections) {
-                        val ref = firestore.collection("users").document(userId).collection(collection)
+                        val ref = currentFirestore.collection("users").document(userId).collection(collection)
                         val snapshot = ref.get().await()
                         for (doc in snapshot.documents) {
                             doc.reference.delete().await()

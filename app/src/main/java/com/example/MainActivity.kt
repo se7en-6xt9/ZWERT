@@ -33,10 +33,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Initialize Firebase
+        // Ensure Firebase is ready
         try {
-            FirebaseApp.initializeApp(applicationContext)
-            val db: FirebaseFirestore = FirebaseFirestore.getInstance()
+            if (FirebaseApp.getApps(applicationContext).isNotEmpty()) {
+                FirebaseFirestore.getInstance()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }

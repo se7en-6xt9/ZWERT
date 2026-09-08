@@ -27,31 +27,68 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Decode google-services.json
+      - name: Setup google-services.json
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           if [ -n "$GOOGLE_SERVICES_JSON" ]; then
             echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            echo "Used GOOGLE_SERVICES_JSON secret."
+          elif [ -f "app/google-services.json" ]; then
+            echo "Found existing app/google-services.json in repo."
           else
-            echo "GOOGLE_SERVICES_JSON secret is not set, skipping."
+            echo "Generating fallback app/google-services.json for build."
+            cat << 'EOF' > app/google-services.json
+{
+  "project_info": {
+    "project_number": "89592870844",
+    "project_id": "attentis-f0c3d",
+    "storage_bucket": "attentis-f0c3d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:89592870844:android:81dd3dd72fa269ab245db9",
+        "android_client_info": {
+          "package_name": "com.aistudio.attentis.rndm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCW2mwKGlghZp3ROvg30T-1j5PggWVfVa4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
+EOF
           fi
 
-      - name: Create .env file
+      - name: Setup .env file
         env:
           ENV_FILE: ${{ secrets.ENV_FILE }}
         run: |
           if [ -n "$ENV_FILE" ]; then
             echo "$ENV_FILE" > .env
-          else
-            echo "ENV_FILE secret is not set, skipping."
+          elif [ ! -f ".env" ]; then
+            touch .env
           fi
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Generate debug keystore
-        run: keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "C=US, O=Android, CN=Android Debug"
+      - name: Generate debug keystore if missing
+        run: |
+          if [ ! -f "debug.keystore" ]; then
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "C=US, O=Android, CN=Android Debug"
+          fi
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug
