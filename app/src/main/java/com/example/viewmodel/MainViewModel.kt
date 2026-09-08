@@ -56,6 +56,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _currentUserEmail = MutableStateFlow("")
     val currentUserEmail: StateFlow<String> = _currentUserEmail.asStateFlow()
+    
+    private val _userProfile = MutableStateFlow<com.example.models.UserProfile?>(null)
+    val userProfile: StateFlow<com.example.models.UserProfile?> = _userProfile.asStateFlow()
 
     init {
         try {
@@ -63,6 +66,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (currentAuth != null) {
                 _authState.value = currentAuth.currentUser != null
                 _currentUserEmail.value = currentAuth.currentUser?.email ?: ""
+                
+                if (currentAuth.currentUser != null) {
+                    syncDataFromFirebase()
+                    fetchUserProfile()
+                }
+
                 currentAuth.addAuthStateListener { firebaseAuth ->
                     _authState.value = firebaseAuth.currentUser != null
                     _currentUserEmail.value = firebaseAuth.currentUser?.email ?: ""
@@ -70,6 +79,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         } catch (e: Throwable) {
             Log.e("MainViewModel", "Firebase auth initialization/listener failed", e)
+        }
+    }
+
+    fun fetchUserProfile(onComplete: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val uid = auth?.currentUser?.uid
+            if (uid != null && firestore != null) {
+                try {
+                    val doc = firestore!!.collection("users").document(uid).collection("profile").document("info").get().await()
+                    if (doc.exists()) {
+                        _userProfile.value = doc.toObject(com.example.models.UserProfile::class.java)
+                        onComplete(true)
+                    } else {
+                        onComplete(false)
+                    }
+                } catch (e: Exception) {
+                    Log.e("FirebaseSync", "Failed to fetch profile: ${e.message}")
+                    onComplete(false)
+                }
+            } else {
+                onComplete(false)
+            }
+        }
+    }
+
+    fun saveUserProfile(profile: com.example.models.UserProfile, onComplete: () -> Unit) {
+        viewModelScope.launch {
+            val uid = auth?.currentUser?.uid
+            if (uid != null && firestore != null) {
+                try {
+                    firestore!!.collection("users").document(uid).collection("profile").document("info").set(profile).await()
+                    _userProfile.value = profile
+                } catch (e: Exception) {
+                    Log.e("FirebaseSync", "Failed to save profile: ${e.message}")
+                }
+            } else {
+                _userProfile.value = profile
+            }
+            onComplete()
         }
     }
 
@@ -111,7 +159,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun signInWithGoogleToken(idToken: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+    fun signInWithGoogleToken(idToken: String, onSuccess: (Boolean) -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
                 val currentAuth = auth
@@ -122,7 +170,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val credential = GoogleAuthProvider.getCredential(idToken, null)
                 currentAuth.signInWithCredential(credential).await()
                 syncDataFromFirebase {
-                    onSuccess()
+                    fetchUserProfile { exists ->
+                        onSuccess(exists)
+                    }
                 }
             } catch (e: Throwable) {
                 Log.e("Auth", "Google sign-in failed", e)

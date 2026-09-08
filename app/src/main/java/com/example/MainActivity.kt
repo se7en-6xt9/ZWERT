@@ -47,6 +47,8 @@ class MainActivity : ComponentActivity() {
             AppTheme {
                 val navController = rememberNavController()
                 val snackbarHostState = remember { SnackbarHostState() }
+                val isLogged = viewModel.authState.value
+                val initialRoute = if (isLogged) "faculty_dashboard" else "login"
                 
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
@@ -54,7 +56,7 @@ class MainActivity : ComponentActivity() {
                 ) { innerPadding ->
                     NavHost(
                         navController = navController, 
-                        startDestination = "login",
+                        startDestination = initialRoute,
                         enterTransition = {
                             slideIntoContainer(
                                 towards = AnimatedContentTransitionScope.SlideDirection.Left,
@@ -82,6 +84,9 @@ class MainActivity : ComponentActivity() {
                     ) {
                         composable("login") {
                             LoginScreen(navController = navController, viewModel = viewModel, snackbarHostState = snackbarHostState)
+                        }
+                        composable("onboarding") {
+                            com.example.ui.screens.OnboardingScreen(navController = navController, viewModel = viewModel)
                         }
                         composable("faculty_dashboard") {
                             FacultyDashboardScreen(navController = navController, viewModel = viewModel)

@@ -24,6 +24,13 @@ import com.example.viewmodel.MainViewModel
 @Composable
 fun StudentDashboardScreen(navController: NavController, viewModel: MainViewModel) {
     var showLeaveDialog by remember { mutableStateOf(false) }
+    val userProfile by viewModel.userProfile.collectAsState()
+    val firstName = userProfile?.firstName?.takeIf { it.isNotBlank() } ?: "Student"
+    val lastName = userProfile?.lastName?.takeIf { it.isNotBlank() } ?: ""
+    val name = if (lastName.isNotBlank()) "$firstName $lastName" else firstName
+    val college = userProfile?.college?.takeIf { it.isNotBlank() } ?: "Demo College"
+    val dept = userProfile?.department?.takeIf { it.isNotBlank() } ?: "CSE"
+
 
     Scaffold(
         topBar = {
@@ -63,13 +70,13 @@ fun StudentDashboardScreen(navController: NavController, viewModel: MainViewMode
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Sakshi Sharma",
+                        text = name,
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Text(
-                        text = "Roll No: 24BCS025 • B.Tech CSE",
+                        text = "$college • $dept",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                     )

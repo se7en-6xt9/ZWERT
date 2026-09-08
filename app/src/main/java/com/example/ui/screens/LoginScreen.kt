@@ -110,10 +110,16 @@ fun LoginScreen(
                                 val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                                 viewModel.signInWithGoogleToken(
                                     googleIdTokenCredential.idToken,
-                                    onSuccess = {
+                                    onSuccess = { profileExists ->
                                         isSigningIn = false
-                                        navController.navigate("faculty_dashboard") {
-                                            popUpTo("login") { inclusive = true }
+                                        if (profileExists) {
+                                            navController.navigate("faculty_dashboard") {
+                                                popUpTo("login") { inclusive = true }
+                                            }
+                                        } else {
+                                            navController.navigate("onboarding") {
+                                                popUpTo("login") { inclusive = true }
+                                            }
                                         }
                                     },
                                     onError = { msg ->
@@ -177,8 +183,15 @@ fun LoginScreen(
             onClick = {
                 viewModel.setRole(true)
                 viewModel.loadDummyData()
-                navController.navigate("faculty_dashboard") {
-                    popUpTo("login") { inclusive = true }
+                val profileExists = viewModel.userProfile.value != null
+                if (profileExists) {
+                    navController.navigate("faculty_dashboard") {
+                        popUpTo("login") { inclusive = true }
+                    }
+                } else {
+                    navController.navigate("onboarding") {
+                        popUpTo("login") { inclusive = true }
+                    }
                 }
             },
             modifier = Modifier
