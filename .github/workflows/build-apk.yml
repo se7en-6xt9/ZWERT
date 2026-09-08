@@ -39,36 +39,36 @@ jobs:
           else
             echo "Generating fallback app/google-services.json for build."
             cat << 'EOF' > app/google-services.json
-{
-  "project_info": {
-    "project_number": "89592870844",
-    "project_id": "attentis-f0c3d",
-    "storage_bucket": "attentis-f0c3d.firebasestorage.app"
-  },
-  "client": [
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:89592870844:android:81dd3dd72fa269ab245db9",
-        "android_client_info": {
-          "package_name": "com.aistudio.attentis.rndm"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyCW2mwKGlghZp3ROvg30T-1j5PggWVfVa4"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    }
-  ],
-  "configuration_version": "1"
-}
-EOF
+          {
+            "project_info": {
+              "project_number": "89592870844",
+              "project_id": "attentis-f0c3d",
+              "storage_bucket": "attentis-f0c3d.firebasestorage.app"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:89592870844:android:81dd3dd72fa269ab245db9",
+                  "android_client_info": {
+                    "package_name": "com.aistudio.attentis.rndm"
+                  }
+                },
+                "oauth_client": [],
+                "api_key": [
+                  {
+                    "current_key": "AIzaSyCW2mwKGlghZp3ROvg30T-1j5PggWVfVa4"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
           fi
 
       - name: Setup .env file
