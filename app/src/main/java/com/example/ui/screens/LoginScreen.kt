@@ -110,16 +110,10 @@ fun LoginScreen(
                                 val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                                 viewModel.signInWithGoogleToken(
                                     googleIdTokenCredential.idToken,
-                                    onSuccess = { profileExists ->
+                                    onSuccess = {
                                         isSigningIn = false
-                                        if (profileExists) {
-                                            navController.navigate("faculty_dashboard") {
-                                                popUpTo("login") { inclusive = true }
-                                            }
-                                        } else {
-                                            navController.navigate("onboarding") {
-                                                popUpTo("login") { inclusive = true }
-                                            }
+                                        navController.navigate("faculty_dashboard") {
+                                            popUpTo("login") { inclusive = true }
                                         }
                                     },
                                     onError = { msg ->
@@ -140,11 +134,7 @@ fun LoginScreen(
                     } catch (e: GetCredentialException) {
                         isSigningIn = false
                         Log.e("LoginScreen", "GetCredentialException", e)
-                        if (e is androidx.credentials.exceptions.NoCredentialException) {
-                            snackbarHostState.showSnackbar("No Google account found on device. Please use a demo account below.")
-                        } else {
-                            snackbarHostState.showSnackbar("Google Sign-In failed or was cancelled.")
-                        }
+                        snackbarHostState.showSnackbar("Google Sign-In failed or was cancelled.")
                     }
                 }
             },
@@ -187,15 +177,8 @@ fun LoginScreen(
             onClick = {
                 viewModel.setRole(true)
                 viewModel.loadDummyData()
-                val profileExists = viewModel.userProfile.value != null
-                if (profileExists) {
-                    navController.navigate("faculty_dashboard") {
-                        popUpTo("login") { inclusive = true }
-                    }
-                } else {
-                    navController.navigate("onboarding") {
-                        popUpTo("login") { inclusive = true }
-                    }
+                navController.navigate("faculty_dashboard") {
+                    popUpTo("login") { inclusive = true }
                 }
             },
             modifier = Modifier
