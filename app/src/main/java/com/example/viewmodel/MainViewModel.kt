@@ -108,6 +108,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val importData = com.example.data.ImportTimetableData(teacher = null, batches = batches)
                         repository.processTimetableImport(importData)
                         Log.d("FirebaseSync", "Synced ${batches.size} batches from Firestore")
+                        
+                        // Sync attendance
+                        val attendanceRef = firestore!!.collection("users").document(uid).collection("attendance")
+                        val attSnapshot = attendanceRef.get().await()
+                        val attendanceRecords = attSnapshot.documents.mapNotNull { doc ->
+                            doc.toObject(AttendanceRecordEntity::class.java)
+                        }
+                        attendanceRecords.forEach { record ->
+                            repository.saveAttendance(record)
+                        }
+                        Log.d("FirebaseSync", "Synced ${attendanceRecords.size} attendance records from Firestore")
                     } else {
                         Log.d("FirebaseSync", "No batches found on Firestore for this user")
                     }
@@ -119,7 +130,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun signInWithGoogleToken(idToken: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+    fun signInWithGoogleToken(idToken: String, onSuccess: (Boolean) -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
                 val currentAuth = auth
@@ -130,7 +141,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val credential = GoogleAuthProvider.getCredential(idToken, null)
                 currentAuth.signInWithCredential(credential).await()
                 syncDataFromFirebase {
-                    onSuccess()
+                    viewModelScope.launch {
+                        var hasProfile = false
+                        val uid = currentAuth.currentUser?.uid
+                        if (uid != null && firestore != null) {
+                            try {
+                                val doc = firestore!!.collection("users").document(uid).collection("profile").document("info").get().await()
+                                hasProfile = doc.exists()
+                            } catch (e: Exception) {
+                                Log.e("Profile", "Error checking profile", e)
+                            }
+                        }
+                        onSuccess(hasProfile)
+                    }
                 }
             } catch (e: Throwable) {
                 Log.e("Auth", "Google sign-in failed", e)
@@ -139,6 +162,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun saveUserProfile(name: String, subject: String, institute: String, onComplete: () -> Unit, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val uid = auth?.currentUser?.uid
+                if (uid != null && firestore != null) {
+                    val profileData = hashMapOf(
+                        "name" to name,
+                        "subject" to subject,
+                        "institute" to institute
+                    )
+                    firestore!!.collection("users").document(uid).collection("profile").document("info").set(profileData).await()
+                    onComplete()
+                } else {
+                    onError("Auth or Firestore not initialized")
+                }
+            } catch (e: Exception) {
+                Log.e("Profile", "Error saving profile", e)
+                onError(e.message ?: "Error saving profile")
+            }
+        }
+    }
     fun signOut() {
         try {
             auth?.signOut()
@@ -302,16 +346,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     
     fun markAttendance(date: String, slotId: String, studentId: String, status: String) {
         viewModelScope.launch {
+            val uid = auth?.currentUser?.uid
+            val attendanceRef = if (firestore != null && uid != null) {
+                firestore!!.collection("users").document(uid).collection("attendance")
+            } else null
+            
             if (status == "NONE") {
                 repository.deleteAttendance(date, slotId, studentId)
+                attendanceRef?.document("${date}_${slotId}_$studentId")?.delete()
             } else {
                 repository.deleteAttendance(date, slotId, studentId)
-                repository.saveAttendance(AttendanceRecordEntity(
+                val record = AttendanceRecordEntity(
                     date = date,
                     scheduleSlotId = slotId,
                     studentId = studentId,
                     status = status
-                ))
+                )
+                repository.saveAttendance(record)
+                attendanceRef?.document("${date}_${slotId}_$studentId")?.set(record)
             }
         }
     }
@@ -322,13 +374,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     
     fun markAllStudentsAttendance(date: String, slotId: String, studentIds: List<String>, status: String) {
         viewModelScope.launch {
+            val uid = auth?.currentUser?.uid
+            val batch = if (firestore != null && uid != null) firestore!!.batch() else null
+            val attendanceRef = if (firestore != null && uid != null) {
+                firestore!!.collection("users").document(uid).collection("attendance")
+            } else null
+            
             studentIds.forEach { studentId ->
-                repository.saveAttendance(AttendanceRecordEntity(
+                val record = AttendanceRecordEntity(
                     date = date,
                     scheduleSlotId = slotId,
                     studentId = studentId,
                     status = status
-                ))
+                )
+                repository.saveAttendance(record)
+                if (batch != null && attendanceRef != null) {
+                    batch.set(attendanceRef.document("${date}_${slotId}_$studentId"), record)
+                }
+            }
+            batch?.commit()
+        }
+    }
+
+    fun loadUserProfile(onSuccess: (com.example.models.UserProfile?) -> Unit) {
+        viewModelScope.launch {
+            val uid = auth?.currentUser?.uid
+            if (uid != null && firestore != null) {
+                try {
+                    val doc = firestore!!.collection("users").document(uid).collection("profile").document("info").get().await()
+                    if (doc.exists()) {
+                        val profile = doc.toObject(com.example.models.UserProfile::class.java)
+                        onSuccess(profile)
+                    } else {
+                        onSuccess(null)
+                    }
+                } catch (e: Exception) {
+                    onSuccess(null)
+                }
+            } else {
+                onSuccess(null)
             }
         }
     }

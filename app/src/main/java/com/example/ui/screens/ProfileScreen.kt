@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.DeleteForever
@@ -20,14 +21,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.navigation.NavController
 import com.example.viewmodel.MainViewModel
+import androidx.navigation.NavController
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
     val email by viewModel.currentUserEmail.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
+    var userProfile by remember { mutableStateOf<com.example.models.UserProfile?>(null) }
+    LaunchedEffect(Unit) {
+        viewModel.loadUserProfile { profile ->
+            userProfile = profile
+        }
+    }
     var showWipeDialog by remember { mutableStateOf(false) }
 
     if (showWipeDialog) {
@@ -91,7 +98,7 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                Text("YT", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold, fontSize = 48.sp)
+                Text(userProfile?.name?.takeIf { it.isNotBlank() }?.let { name -> name.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("") } ?: "YT", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold, fontSize = 48.sp)
             }
             
             Spacer(modifier = Modifier.height(24.dp))
@@ -118,11 +125,29 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(8.dp)) {
+                        Icon(Icons.Default.Business, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column {
+                            Text("Institute", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(userProfile?.institute?.takeIf { it.isNotBlank() } ?: "Not Set", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(8.dp)) {
                         Icon(Icons.Default.Email, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
                             Text("Email", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(email.takeIf { it.isNotBlank() } ?: "yash.thakur@university.edu", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                            Text(email?.takeIf { it.isNotBlank() } ?: "yash.thakur@university.edu", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(8.dp)) {
+                        Icon(Icons.Default.Business, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column {
+                            Text("Institute", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(userProfile?.institute?.takeIf { it.isNotBlank() } ?: "Not Set", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                         }
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))

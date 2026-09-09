@@ -33,8 +33,8 @@ data class ScheduleSlotEntity(
 @Entity(tableName = "attendance")
 data class AttendanceRecordEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val date: String, // e.g., "YYYY-MM-DD"
-    val scheduleSlotId: String,
-    val studentId: String,
-    val status: String // "P", "A", "L"
+    val date: String = "", // e.g., "YYYY-MM-DD"
+    val scheduleSlotId: String = "",
+    val studentId: String = "",
+    val status: String = "" // "P", "A", "L"
 )

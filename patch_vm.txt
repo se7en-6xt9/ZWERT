@@ -1,0 +1,53 @@
+    fun signInWithGoogleToken(idToken: String, onSuccess: (Boolean) -> Unit, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val currentAuth = auth
+                if (currentAuth == null) {
+                    onError("Firebase Auth is not available on this device.")
+                    return@launch
+                }
+                val credential = GoogleAuthProvider.getCredential(idToken, null)
+                currentAuth.signInWithCredential(credential).await()
+                syncDataFromFirebase {
+                    viewModelScope.launch {
+                        var hasProfile = false
+                        val uid = currentAuth.currentUser?.uid
+                        if (uid != null && firestore != null) {
+                            try {
+                                val doc = firestore!!.collection("users").document(uid).collection("profile").document("info").get().await()
+                                hasProfile = doc.exists()
+                            } catch (e: Exception) {
+                                Log.e("Profile", "Error checking profile", e)
+                            }
+                        }
+                        onSuccess(hasProfile)
+                    }
+                }
+            } catch (e: Throwable) {
+                Log.e("Auth", "Google sign-in failed", e)
+                onError(e.message ?: "Authentication failed")
+            }
+        }
+    }
+    
+    fun saveUserProfile(name: String, subject: String, institute: String, onComplete: () -> Unit, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val uid = auth?.currentUser?.uid
+                if (uid != null && firestore != null) {
+                    val profileData = hashMapOf(
+                        "name" to name,
+                        "subject" to subject,
+                        "institute" to institute
+                    )
+                    firestore!!.collection("users").document(uid).collection("profile").document("info").set(profileData).await()
+                    onComplete()
+                } else {
+                    onError("Auth or Firestore not initialized")
+                }
+            } catch (e: Exception) {
+                Log.e("Profile", "Error saving profile", e)
+                onError(e.message ?: "Error saving profile")
+            }
+        }
+    }

@@ -1,0 +1,3 @@
+                        composable("profile_setup") {
+                            com.example.ui.screens.ProfileSetupScreen(navController = navController, viewModel = viewModel)
+                        }
