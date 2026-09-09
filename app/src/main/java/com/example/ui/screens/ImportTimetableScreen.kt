@@ -197,15 +197,23 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
 
                     Button(
                         onClick = {
+
                             if (rawText.isBlank() && selectedBitmap == null) {
                                 Toast.makeText(context, "Add text or an image", Toast.LENGTH_SHORT).show()
                                 return@Button
                             }
                             
+                            val apiKey = com.example.BuildConfig.GEMINI_API_KEY
+                            if (apiKey.isBlank()) {
+                                Toast.makeText(context, "API Key missing! Add it in the Secrets panel.", Toast.LENGTH_LONG).show()
+                                return@Button
+                            }
+
                             isLoading = true
                             aiStatusText = "AI is thinking..."
                             coroutineScope.launch {
-                                val aiResult = com.example.viewmodel.AiHelper.parseTimetableData(rawText, selectedBitmap, com.example.BuildConfig.GEMINI_API_KEY)
+                                val aiResult = com.example.viewmodel.AiHelper.parseTimetableData(rawText, selectedBitmap, apiKey)
+
                                 if (aiResult != null) {
                                     aiStatusText = "Saving data..."
                                     // Sometimes AI returns markdown wrapped JSON
