@@ -15,36 +15,44 @@ object AiHelper {
                     modelName = "gemini-1.5-pro",
                     apiKey = apiKey,
                     systemInstruction = content { 
-                        text("You are an expert data extraction AI for a university attendance system. Your task is to intelligently map messy, unstructured data (text, images, or bad JSON) into a strict internal JSON schema. You are forgiving of typos, excellent at inferring context, and strict about outputting valid JSON.") 
+                        text("""
+                            You are an advanced Data Extraction & OCR AI for an academic timetable app. 
+                            Your only job is to consume messy data (text, malformed JSON, or images) and output perfectly formatted, strict JSON matching our exact schema. 
+                            If the user provides a broken JSON, fix it. If the user provides a picture, use OCR to understand it. 
+                            If data is missing, make intelligent guesses or fill with sensible placeholders (e.g. 'Unknown Course', 'TBD', or generate unique IDs). 
+                            NEVER fail to output the JSON structure.
+                        """.trimIndent()) 
                     },
                     generationConfig = generationConfig {
                         responseMimeType = "application/json"
-                        temperature = 0.1f
+                        temperature = 0.2f
                     }
                 )
 
                 val prompt = """
-                    Analyze the following input (which may include text and/or an image) representing a teacher's schedule, timetable, or student list.
+                    Analyze the following input. It might be a messy text snippet, a broken JSON file, or an uploaded image (OCR required).
                     
-                    Your goal is to extract this information and map it EXACTLY to the following JSON schema. 
+                    Your goal is to extract whatever information is available and map it to the STRICT JSON schema below.
                     
-                    # Intelligent Mapping Rules:
-                    1. **Teacher Context**: Try to identify the teacher's name. If missing, use "Unknown Faculty".
-                    2. **Batches & Courses**: A "batch" groups a Course, its Schedule, and its Students. If multiple schedules belong to the same course/section, group them in one batch.
-                    3. **Course Names**: If you see subjects like "Math", "CS101", put them in course.name and course.code. If omitted, invent a logical placeholder like "Imported Course".
-                    4. **Schedule Normalization**: Standardize days to 3-letter formats (Mon, Tue, Wed, Thu, Fri, Sat, Sun). Clean up times to "HH:MM AM/PM - HH:MM AM/PM".
-                    5. **Student Lists**: If you see lines of names/numbers, they are students. Map names to 'name', and IDs/numbers to 'rollNumber'. 
-                    6. **Missing IDs**: Always generate clean, unique IDs for missing fields (e.g., 'batch_1', 'stu_123').
-                    7. **Partial Data**: If the user provides ONLY a schedule (no students), or ONLY students (no schedule), still return valid JSON wrapping it in a generic batch so the system can accept it.
-                    
-                    # Target JSON Schema:
+                    # Core Rules & Edge Cases:
+                    1. **Broken JSON Handling**: If the text provided looks like a malformed JSON file (missing quotes, trailing commas, missing brackets), FIX it and map it to the requested schema.
+                    2. **OCR & Image Extraction**: If an image is provided, thoroughly scan it. Time grids become 'weeklySchedule', lists of names become 'students'.
+                    3. **Partial Data Recovery**: 
+                       - If you only find a list of students, wrap them inside a single batch with a dummy course ("Imported Course").
+                       - If you only find a timetable, wrap it inside a batch with an empty students list.
+                       - We MUST return at least one batch if any data is found.
+                    4. **Never Omit Fields**: Even if a field is unknown, provide it with an empty string "", or a sensible default.
+                    5. **Auto-Generate IDs**: Any missing 'id', 'batchId', 'rollNumber' MUST be auto-generated (e.g. "batch_001", "stu_001").
+                    6. **Schedule Formatting**: Standardize days to 3 letters (Mon, Tue, Wed, Thu, Fri, Sat, Sun). Clean up times to "9:00 AM - 10:00 AM".
+
+                    # Target Strict Schema:
                     {
                       "teacher": { "name": "String", "id": "String" },
                       "batches": [
                         {
                           "batchId": "String",
-                          "year": "String (e.g. 2024)",
-                          "semester": "String (e.g. 1st Sem)",
+                          "year": "String",
+                          "semester": "String",
                           "course": { "code": "String", "name": "String" },
                           "section": "String",
                           "location": "String",
@@ -58,10 +66,10 @@ object AiHelper {
                       ]
                     }
                     
-                    Return ONLY a raw, valid JSON object. Do not wrap it in markdown block quotes (```json ... ```). Just the raw braces.
+                    Output ONLY valid JSON. No markdown blocks, no conversational text.
                     
                     Raw Input:
-                    ${rawText.ifBlank { "No text provided" }}
+                    ${rawText.ifBlank { "No text provided, rely on image if present." }}
                 """.trimIndent()
 
                 val inputContent = content {
@@ -72,7 +80,16 @@ object AiHelper {
                 }
 
                 val response = generativeModel.generateContent(inputContent)
-                response.text?.replace("```json", "")?.replace("```", "")?.trim()
+                
+                // Cleanup: Extract JSON in case Gemini wraps it in markdown despite instructions
+                var rawJson = response.text ?: ""
+                if (rawJson.contains("```json")) {
+                    rawJson = rawJson.substringAfter("```json").substringBeforeLast("```")
+                } else if (rawJson.contains("```")) {
+                    rawJson = rawJson.substringAfter("```").substringBeforeLast("```")
+                }
+                
+                rawJson.trim()
             } catch (e: Exception) {
                 e.printStackTrace()
                 null

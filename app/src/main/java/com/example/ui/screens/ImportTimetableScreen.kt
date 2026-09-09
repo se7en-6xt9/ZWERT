@@ -239,8 +239,14 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
 
                                 if (aiResult != null) {
                                     aiStatusText = "Saving data..."
-                                    // Sometimes AI returns markdown wrapped JSON
-                                    val cleanJson = aiResult.replace("```json", "").replace("```", "").trim()
+                                    // Aggressively clean JSON by finding the first { and last }
+                                    var cleanJson = aiResult.replace("```json", "").replace("```", "").trim()
+                                    val startIndex = cleanJson.indexOf('{')
+                                    val endIndex = cleanJson.lastIndexOf('}')
+                                    if (startIndex != -1 && endIndex != -1 && endIndex >= startIndex) {
+                                        cleanJson = cleanJson.substring(startIndex, endIndex + 1)
+                                    }
+                                    
                                     viewModel.importTimetableFromJson(cleanJson,
                                         onSuccess = {
                                             isLoading = false
