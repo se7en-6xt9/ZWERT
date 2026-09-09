@@ -1,4 +1,9 @@
-package com.example.ui.screens
+import re
+
+with open("app/src/main/java/com/example/ui/screens/ImportTimetableScreen.kt", "r") as f:
+    content = f.read()
+
+new_content = """package com.example.ui.screens
 
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
@@ -250,3 +255,7 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
         }
     }
 }
+"""
+
+with open("app/src/main/java/com/example/ui/screens/ImportTimetableScreen.kt", "w") as f:
+    f.write(new_content)

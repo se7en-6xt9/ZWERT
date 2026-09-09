@@ -1,16 +1,15 @@
-package com.example.ui.screens
+import re
 
-import android.graphics.Bitmap
-import android.graphics.ImageDecoder
-import android.net.Uri
-import android.os.Build
-import android.provider.MediaStore
+with open("app/src/main/java/com/example/ui/screens/ImportTimetableScreen.kt", "r") as f:
+    content = f.read()
+
+new_content = """package com.example.ui.screens
+
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -26,7 +25,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -42,9 +40,6 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
     var apiKey by remember { mutableStateOf("AIzaSyDwM0mgO8we85qwh3Uq8QQoQdF1W8oyNBA") }
     var isLoading by remember { mutableStateOf(false) }
     var aiStatusText by remember { mutableStateOf("") }
-    var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
-    var selectedBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
@@ -60,25 +55,6 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
                 }
             } catch (e: Exception) {
                 Toast.makeText(context, "Failed to read file", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    val imagePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
-            selectedImageUri = uri
-            try {
-                selectedBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    val source = ImageDecoder.createSource(context.contentResolver, uri)
-                    ImageDecoder.decodeBitmap(source)
-                } else {
-                    @Suppress("DEPRECATION")
-                    MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to load image", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -105,8 +81,8 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text("AI-Powered Data Entry", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("Upload a photo, paste JSON, or add raw text. The AI will extract the timetable for you.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("AI-Powered Importer", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("Paste JSON, raw text, or upload a file. The AI will extract it for you.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             
             OutlinedTextField(
                 value = apiKey,
@@ -115,48 +91,16 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
             )
-            
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(
-                    onClick = { filePickerLauncher.launch("*/*") },
-                    modifier = Modifier.weight(1f).height(50.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.UploadFile, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Text File", fontWeight = FontWeight.Bold)
-                }
-                Button(
-                    onClick = { imagePickerLauncher.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                    modifier = Modifier.weight(1f).height(50.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer, contentColor = MaterialTheme.colorScheme.onTertiaryContainer),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.AddPhotoAlternate, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Add Photo", fontWeight = FontWeight.Bold)
-                }
-            }
 
-            if (selectedBitmap != null) {
-                Box(modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(16.dp)).background(Color.LightGray)) {
-                    Image(
-                        bitmap = selectedBitmap!!.asImageBitmap(),
-                        contentDescription = "Selected Timetable Image",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                    )
-                    IconButton(
-                        onClick = { 
-                            selectedBitmap = null 
-                            selectedImageUri = null
-                        },
-                        modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                    ) {
-                        Icon(Icons.Default.Close, contentDescription = "Remove Image", tint = Color.White)
-                    }
-                }
+            Button(
+                onClick = { filePickerLauncher.launch("*/*") },
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.FileUpload, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Upload File", fontWeight = FontWeight.Bold)
             }
             
             OutlinedTextField(
@@ -164,7 +108,7 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
                 onValueChange = { rawText = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp),
+                    .height(250.dp),
                 placeholder = { Text("Paste JSON or raw text here...") },
                 shape = RoundedCornerShape(16.dp)
             )
@@ -204,18 +148,14 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
 
                     Button(
                         onClick = {
-                            if (rawText.isBlank() && selectedBitmap == null) {
-                                Toast.makeText(context, "Add text or an image", Toast.LENGTH_SHORT).show()
-                                return@Button
-                            }
-                            if (apiKey.isBlank()) {
-                                Toast.makeText(context, "API Key is required for AI", Toast.LENGTH_SHORT).show()
+                            if (rawText.isBlank() || apiKey.isBlank()) {
+                                Toast.makeText(context, "Missing data or API Key", Toast.LENGTH_SHORT).show()
                                 return@Button
                             }
                             isLoading = true
                             aiStatusText = "AI is thinking..."
                             coroutineScope.launch {
-                                val aiResult = com.example.viewmodel.AiHelper.parseTimetableData(rawText, selectedBitmap, apiKey)
+                                val aiResult = com.example.viewmodel.AiHelper.parseTimetableData(rawText, apiKey)
                                 if (aiResult != null) {
                                     aiStatusText = "Saving data..."
                                     // Sometimes AI returns markdown wrapped JSON
@@ -228,12 +168,12 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
                                         },
                                         onError = { error ->
                                             isLoading = false
-                                            Toast.makeText(context, "AI Import failed: $error", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, error, Toast.LENGTH_LONG).show()
                                         }
                                     )
                                 } else {
                                     isLoading = false
-                                    Toast.makeText(context, "AI failed to extract the data", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, "AI failed to parse the data", Toast.LENGTH_LONG).show()
                                 }
                             }
                         },
@@ -250,3 +190,7 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
         }
     }
 }
+"""
+
+with open("app/src/main/java/com/example/ui/screens/ImportTimetableScreen.kt", "w") as f:
+    f.write(new_content)
