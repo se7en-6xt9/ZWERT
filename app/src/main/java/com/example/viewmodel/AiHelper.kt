@@ -14,6 +14,9 @@ object AiHelper {
                 val generativeModel = GenerativeModel(
                     modelName = "gemini-1.5-pro",
                     apiKey = apiKey,
+                    systemInstruction = content { 
+                        text("You are an expert data extraction AI for a university attendance system. Your task is to intelligently map messy, unstructured data (text, images, or bad JSON) into a strict internal JSON schema. You are forgiving of typos, excellent at inferring context, and strict about outputting valid JSON.") 
+                    },
                     generationConfig = generationConfig {
                         responseMimeType = "application/json"
                         temperature = 0.1f
@@ -21,21 +24,32 @@ object AiHelper {
                 )
 
                 val prompt = """
-                    You are an expert data extractor. The user will provide raw text, JSON, or an image of a class timetable.
-                    Extract this into a specific JSON schema. Do your best to extract as much information as you can understand.
-                    The schema is:
+                    Analyze the following input (which may include text and/or an image) representing a teacher's schedule, timetable, or student list.
+                    
+                    Your goal is to extract this information and map it EXACTLY to the following JSON schema. 
+                    
+                    # Intelligent Mapping Rules:
+                    1. **Teacher Context**: Try to identify the teacher's name. If missing, use "Unknown Faculty".
+                    2. **Batches & Courses**: A "batch" groups a Course, its Schedule, and its Students. If multiple schedules belong to the same course/section, group them in one batch.
+                    3. **Course Names**: If you see subjects like "Math", "CS101", put them in course.name and course.code. If omitted, invent a logical placeholder like "Imported Course".
+                    4. **Schedule Normalization**: Standardize days to 3-letter formats (Mon, Tue, Wed, Thu, Fri, Sat, Sun). Clean up times to "HH:MM AM/PM - HH:MM AM/PM".
+                    5. **Student Lists**: If you see lines of names/numbers, they are students. Map names to 'name', and IDs/numbers to 'rollNumber'. 
+                    6. **Missing IDs**: Always generate clean, unique IDs for missing fields (e.g., 'batch_1', 'stu_123').
+                    7. **Partial Data**: If the user provides ONLY a schedule (no students), or ONLY students (no schedule), still return valid JSON wrapping it in a generic batch so the system can accept it.
+                    
+                    # Target JSON Schema:
                     {
                       "teacher": { "name": "String", "id": "String" },
                       "batches": [
                         {
                           "batchId": "String",
-                          "year": "String",
-                          "semester": "String",
+                          "year": "String (e.g. 2024)",
+                          "semester": "String (e.g. 1st Sem)",
                           "course": { "code": "String", "name": "String" },
                           "section": "String",
                           "location": "String",
                           "weeklySchedule": [
-                            { "day": "String (e.g., Mon, Tue)", "time": "String (e.g., 9:00 AM - 10:00 AM)", "location": "String" }
+                            { "day": "String", "time": "String", "location": "String" }
                           ],
                           "students": [
                             { "id": "String", "name": "String", "rollNumber": "String" }
@@ -44,10 +58,9 @@ object AiHelper {
                       ]
                     }
                     
-                    Return ONLY valid JSON matching this schema exactly. If IDs are missing, generate short unique strings like 'b1', 'b1s1', 't1'.
-                    If any field is unknown, leave it empty or guess logically based on context.
+                    Return ONLY a raw, valid JSON object. Do not wrap it in markdown block quotes (```json ... ```). Just the raw braces.
                     
-                    Raw Text Input:
+                    Raw Input:
                     ${rawText.ifBlank { "No text provided" }}
                 """.trimIndent()
 
@@ -59,7 +72,7 @@ object AiHelper {
                 }
 
                 val response = generativeModel.generateContent(inputContent)
-                response.text
+                response.text?.replace("```json", "")?.replace("```", "")?.trim()
             } catch (e: Exception) {
                 e.printStackTrace()
                 null
