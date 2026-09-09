@@ -125,13 +125,54 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                         shape = RoundedCornerShape(16.dp)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = course?.name ?: "Loading...",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.weight(1f)
-                                )
+                            val courseIdStr = course?.id ?: ""
+                            val parts = courseIdStr.split("-")
+                            var batchText = ""
+                            if (parts.size >= 3) {
+                                val branch = parts[0]
+                                val semStr = parts[1]
+                                var admissionYearText = ""
+                                val sem = if (semStr.endsWith("SEM", ignoreCase = true)) {
+                                    val num = semStr.dropLast(3)
+                                    val suffix = when (num) {
+                                        "1" -> "1st"
+                                        "2" -> "2nd"
+                                        "3" -> "3rd"
+                                        "4" -> "4th"
+                                        "5" -> "5th"
+                                        "6" -> "6th"
+                                        "7" -> "7th"
+                                        "8" -> "8th"
+                                        else -> num
+                                    }
+                                    val currentYear = LocalDate.now().year
+                                    val currentMonth = LocalDate.now().monthValue
+                                    val academicYearStart = if (currentMonth >= 7) currentYear else currentYear - 1
+                                    val semInt = num.toIntOrNull() ?: 1
+                                    val admissionYear = academicYearStart - ((semInt - 1) / 2)
+                                    admissionYearText = " - $admissionYear"
+                                    "$suffix Sem"
+                                } else semStr
+                                batchText = "$branch - $sem$admissionYearText"
+                            }
+                            
+                            Row(verticalAlignment = Alignment.Top) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = course?.name ?: "Loading...",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    if (batchText.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = batchText,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Surface(
                                     color = MaterialTheme.colorScheme.primaryContainer,
@@ -281,14 +322,17 @@ fun SwipeableAttendanceCard(
     onSwipeLeft: () -> Unit,
     onLateClick: () -> Unit
 ) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { dismissValue ->
             when (dismissValue) {
                 SwipeToDismissBoxValue.StartToEnd -> {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     onSwipeRight()
                     false
                 }
                 SwipeToDismissBoxValue.EndToStart -> {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     onSwipeLeft()
                     false
                 }
@@ -387,13 +431,19 @@ fun SwipeableAttendanceCard(
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = statusColor,
-                            modifier = Modifier.clickable { onLateClick() } 
+                            modifier = Modifier.clickable { 
+                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                onLateClick() 
+                            } 
                         ) {
                             Text(statusText, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                         }
                     } else {
                         // Late Button Icon
-                        IconButton(onClick = onLateClick, modifier = Modifier.size(32.dp)) {
+                        IconButton(onClick = { 
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            onLateClick() 
+                        }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.AccessTime, contentDescription = "Late", tint = Color.Gray, modifier = Modifier.size(22.dp))
                         }
                     }

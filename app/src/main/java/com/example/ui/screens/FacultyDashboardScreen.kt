@@ -11,6 +11,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -43,7 +44,9 @@ import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeFormatterBuilder
 import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.math.abs
@@ -100,6 +103,14 @@ fun DashboardContent(
 ) {
     val today = remember { LocalDate.now() }
     val currentDayIndex = maxOf(0, today.dayOfWeek.value - 1)
+    
+    var currentLiveTime by remember { mutableStateOf(LocalTime.now()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30000L) // 30 seconds
+            currentLiveTime = LocalTime.now()
+        }
+    }
     
     val weekDates = remember {
         val startOfWeek = today.minusDays(currentDayIndex.toLong())
@@ -232,15 +243,29 @@ fun DashboardContent(
                 // Pager for swipeable days
                 HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
                     val pageDate = weekDates[page]
+                    val isTodayPage = pageDate == today
                     val dayName = pageDate.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH)
                     val flow = remember(dayName) { viewModel.getScheduleForDay(dayName) }
                     val scheduleSlots by flow.collectAsState(initial = emptyList())
                     var isLoading by remember { mutableStateOf(true) }
+                    val listState = rememberLazyListState()
 
                     LaunchedEffect(page) {
                         isLoading = true
                         delay(300) // Simulated load
                         isLoading = false
+                    }
+
+                    LaunchedEffect(scheduleSlots, isLoading) {
+                        if (!isLoading && scheduleSlots.isNotEmpty() && isTodayPage) {
+                            val liveIndex = scheduleSlots.indexOfFirst { slot ->
+                                isSlotLive(slot, LocalTime.now())
+                            }
+                            if (liveIndex >= 0) {
+                                delay(200)
+                                listState.animateScrollToItem(liveIndex)
+                            }
+                        }
                     }
 
                     AnimatedContent(
@@ -259,13 +284,16 @@ fun DashboardContent(
                             EmptyStateIllustration(dayName)
                         } else {
                             LazyColumn(
+                                state = listState,
                                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 100.dp),
                                 verticalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
                                 itemsIndexed(scheduleSlots, key = { _, slot -> slot.id }) { index, slot ->
+                                    val isLive = isTodayPage && isSlotLive(slot, currentLiveTime)
                                     StaggeredAnimatedItem(index = index) {
                                         GlassLectureCard(
                                             slot = slot,
+                                            isLive = isLive,
                                             onClick = { navController.navigate("lecture_view/${slot.id}") }
                                         )
                                     }
@@ -316,20 +344,27 @@ fun DashboardInfoBlock(viewModel: MainViewModel, navController: NavController, d
 }
 
 @Composable
-fun GlassLectureCard(slot: ScheduleSlotEntity, onClick: () -> Unit) {
+fun GlassLectureCard(slot: ScheduleSlotEntity, isLive: Boolean = false, onClick: () -> Unit) {
     val subjectColors = listOf(Color(0xFFE57373), Color(0xFF81C784), Color(0xFF64B5F6), Color(0xFFFFD54F), Color(0xFFBA68C8))
-    val barColor = subjectColors[abs(slot.courseId.hashCode()) % subjectColors.size]
+    
+    val liveGreen = Color(0xFF4CAF50)
+    val targetBarColor = if (isLive) liveGreen else subjectColors[abs(slot.courseId.hashCode()) % subjectColors.size]
+    val barColor by animateColorAsState(targetBarColor, tween(500), label = "barColor")
+    
+    val targetBgColor = if (isLive) liveGreen.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface
+    val bgColor by animateColorAsState(targetBgColor, tween(500), label = "bgColor")
+    
+    val targetBorderColor = if (isLive) liveGreen.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.15f)
+    val borderColor by animateColorAsState(targetBorderColor, tween(500), label = "borderColor")
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .bounceClick(onClick = onClick),
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
+        colors = CardDefaults.cardColors(containerColor = bgColor),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+        border = BorderStroke(1.dp, borderColor)
     ) {
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
             Box(
@@ -340,29 +375,139 @@ fun GlassLectureCard(slot: ScheduleSlotEntity, onClick: () -> Unit) {
             )
             
             Column(modifier = Modifier.padding(20.dp).fillMaxWidth()) {
+                val parts = slot.courseId.split("-")
+                var subjectText = slot.courseId
+                var batchText = ""
+
+                if (parts.size >= 4) {
+                    val branch = parts[0]
+                    val semStr = parts[1]
+                    val subjectCode = parts.drop(3).joinToString("-") 
+                    
+                    var admissionYearText = ""
+                    val sem = if (semStr.endsWith("SEM", ignoreCase = true)) {
+                        val num = semStr.dropLast(3)
+                        val suffix = when (num) {
+                            "1" -> "1st"
+                            "2" -> "2nd"
+                            "3" -> "3rd"
+                            "4" -> "4th"
+                            "5" -> "5th"
+                            "6" -> "6th"
+                            "7" -> "7th"
+                            "8" -> "8th"
+                            else -> num
+                        }
+                        val currentYear = LocalDate.now().year
+                        val currentMonth = LocalDate.now().monthValue
+                        val academicYearStart = if (currentMonth >= 7) currentYear else currentYear - 1
+                        val semInt = num.toIntOrNull() ?: 1
+                        val admissionYear = academicYearStart - ((semInt - 1) / 2)
+                        admissionYearText = " - $admissionYear"
+                        "$suffix Sem"
+                    } else semStr
+                    
+                    val expandedSubject = when(subjectCode.uppercase()) {
+                        "DBMS" -> "Database Management Systems"
+                        "OS" -> "Operating Systems"
+                        "CN" -> "Computer Networks"
+                        "DSA" -> "Data Structures & Algorithms"
+                        "AI" -> "Artificial Intelligence"
+                        "ML" -> "Machine Learning"
+                        "SE" -> "Software Engineering"
+                        "CS301" -> "Computer Architecture"
+                        "CS302" -> "Computer Networks"
+                        else -> subjectCode
+                    }
+                    subjectText = expandedSubject
+                    batchText = "$branch - $sem$admissionYearText"
+                } else if (parts.size == 3) {
+                    val branch = parts[0]
+                    val semStr = parts[1]
+                    var admissionYearText = ""
+                    val sem = if (semStr.endsWith("SEM", ignoreCase = true)) {
+                        val num = semStr.dropLast(3)
+                        val suffix = when (num) { 
+                            "1" -> "1st"
+                            "2" -> "2nd"
+                            "3" -> "3rd"
+                            "4" -> "4th"
+                            else -> num 
+                        }
+                        val currentYear = LocalDate.now().year
+                        val currentMonth = LocalDate.now().monthValue
+                        val academicYearStart = if (currentMonth >= 7) currentYear else currentYear - 1
+                        val semInt = num.toIntOrNull() ?: 1
+                        val admissionYear = academicYearStart - ((semInt - 1) / 2)
+                        admissionYearText = " - $admissionYear"
+                        "$suffix Sem"
+                    } else semStr
+                    subjectText = parts[2]
+                    batchText = "$branch - $sem$admissionYearText"
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Top
                 ) {
-                    Text(
-                        text = slot.courseId,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.bounceClick {}
-                    ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                         Text(
-                            text = "${slot.startTime} - ${slot.endTime}",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            text = subjectText,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            lineHeight = 24.sp
                         )
+                        if (batchText.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = batchText,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                    
+                    Column(horizontalAlignment = Alignment.End) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isLive) liveGreen else MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.bounceClick {}
+                        ) {
+                            Text(
+                                text = "${slot.startTime} - ${slot.endTime}",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isLive) Color.White else MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                        
+                        if (isLive) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                                val alpha by infiniteTransition.animateFloat(
+                                    initialValue = 0.2f, 
+                                    targetValue = 1f, 
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(800), 
+                                        repeatMode = RepeatMode.Reverse
+                                    ), 
+                                    label = "pulseAlpha"
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(liveGreen.copy(alpha = alpha))
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("LIVE", color = liveGreen, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold)
+                            }
+                        }
                     }
                 }
 
@@ -607,6 +752,7 @@ fun Modifier.bounceClick(
 ): Modifier = composed {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val scale by animateFloatAsState(
         targetValue = if (isPressed) scaleDown else 1f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
@@ -621,6 +767,40 @@ fun Modifier.bounceClick(
         .clickable(
             interactionSource = interactionSource,
             indication = null, 
-            onClick = onClick
+            onClick = {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                onClick()
+            }
         )
+}
+
+fun parseTimeSafely(timeStr: String): LocalTime? {
+    val cleanStr = timeStr.trim().uppercase(Locale.ENGLISH)
+    return try {
+        if (cleanStr.contains("AM") || cleanStr.contains("PM")) {
+            val formatter = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)
+            LocalTime.parse(cleanStr, formatter)
+        } else {
+            val parts = cleanStr.split(":")
+            val h = parts[0].toInt()
+            val m = parts[1].take(2).toInt() 
+            LocalTime.of(h, m)
+        }
+    } catch (e: Exception) {
+        try {
+            val formatter2 = DateTimeFormatterBuilder()
+                .parseCaseInsensitive()
+                .appendPattern("[hh:mm a][h:mm a][HH:mm][H:mm]")
+                .toFormatter(Locale.ENGLISH)
+            LocalTime.parse(cleanStr, formatter2)
+        } catch (e2: Exception) {
+            null
+        }
+    }
+}
+
+fun isSlotLive(slot: ScheduleSlotEntity, now: LocalTime): Boolean {
+    val start = parseTimeSafely(slot.startTime) ?: return false
+    val end = parseTimeSafely(slot.endTime) ?: return false
+    return !now.isBefore(start) && now.isBefore(end)
 }

@@ -54,6 +54,7 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
     var students by remember { mutableStateOf<List<StudentEntity>>(emptyList()) }
     val slots by viewModel.getScheduleSlotsForCourse(courseId).collectAsState(initial = emptyList())
     val attendance by viewModel.getAttendanceForCourse(courseId).collectAsState(initial = emptyList())
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     
     var searchQuery by remember { mutableStateOf("") }
     
@@ -295,7 +296,7 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                                                     width = if (isSelected) 2.dp else 0.5.dp, 
                                                     color = if (isSelected) MaterialTheme.colorScheme.primary else borderColor
                                                 )
-                                                .clickable { selectedCell = Triple(student.id, dateStr, slot.id) },
+                                                .clickable { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); selectedCell = Triple(student.id, dateStr, slot.id) },
                                             contentAlignment = Alignment.Center
                                         ) {
                                             // Status Badge
@@ -335,10 +336,26 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                                                 )
                                                 Divider()
                                                 Row(modifier = Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                    Button(onClick = { viewModel.markAttendance(dateStr, slot.id, student.id, "P"); selectedCell = null }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))) { Text("P") }
-                                                    Button(onClick = { viewModel.markAttendance(dateStr, slot.id, student.id, "A"); selectedCell = null }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF44336))) { Text("A") }
-                                                    Button(onClick = { viewModel.markAttendance(dateStr, slot.id, student.id, "L"); selectedCell = null }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800))) { Text("L") }
-                                                    TextButton(onClick = { viewModel.markAttendance(dateStr, slot.id, student.id, "NONE"); selectedCell = null }) { Text("Clear") }
+                                                    Button(onClick = { 
+                                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                                        viewModel.markAttendance(dateStr, slot.id, student.id, "P")
+                                                        selectedCell = null 
+                                                    }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))) { Text("P") }
+                                                    Button(onClick = { 
+                                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                                        viewModel.markAttendance(dateStr, slot.id, student.id, "A")
+                                                        selectedCell = null 
+                                                    }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF44336))) { Text("A") }
+                                                    Button(onClick = { 
+                                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                                        viewModel.markAttendance(dateStr, slot.id, student.id, "L")
+                                                        selectedCell = null 
+                                                    }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800))) { Text("L") }
+                                                    TextButton(onClick = { 
+                                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                                        viewModel.markAttendance(dateStr, slot.id, student.id, "NONE")
+                                                        selectedCell = null 
+                                                    }) { Text("Clear") }
                                                 }
                                             }
                                         }
@@ -372,8 +389,8 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                                         Box(modifier = Modifier.fillMaxWidth().height(3.dp).background(MaterialTheme.colorScheme.primary))
                                         Spacer(modifier = Modifier.weight(1f))
                                     }
-                                    Text(date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).uppercase(), style = MaterialTheme.typography.labelSmall, color = if (isToday) MaterialTheme.colorScheme.primary else Color.Gray, fontSize = 10.sp)
-                                    Text(date.format(DateTimeFormatter.ofPattern("dd MMM")), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = if (isToday) MaterialTheme.colorScheme.primary else Color.DarkGray)
+                                    Text(date.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = if (isToday) MaterialTheme.colorScheme.primary else Color.DarkGray)
+                                    Text(date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).capitalize(), style = MaterialTheme.typography.labelSmall, color = if (isToday) MaterialTheme.colorScheme.primary else Color.Gray, fontSize = 11.sp)
                                     if (isToday) Spacer(modifier = Modifier.weight(1f))
                                 }
                             }

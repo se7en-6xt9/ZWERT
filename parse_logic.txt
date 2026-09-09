@@ -1,0 +1,31 @@
+fun getBatchText(courseId: String): String {
+    val parts = courseId.split("-")
+    if (parts.size >= 3) {
+        val branch = parts[0]
+        val semStr = parts[1]
+        var admissionYearText = ""
+        val sem = if (semStr.endsWith("SEM", ignoreCase = true)) {
+            val num = semStr.dropLast(3)
+            val suffix = when (num) {
+                "1" -> "1st"
+                "2" -> "2nd"
+                "3" -> "3rd"
+                "4" -> "4th"
+                "5" -> "5th"
+                "6" -> "6th"
+                "7" -> "7th"
+                "8" -> "8th"
+                else -> num
+            }
+            val currentYear = LocalDate.now().year
+            val currentMonth = LocalDate.now().monthValue
+            val academicYearStart = if (currentMonth >= 7) currentYear else currentYear - 1
+            val semInt = num.toIntOrNull() ?: 1
+            val admissionYear = academicYearStart - ((semInt - 1) / 2)
+            admissionYearText = " - $admissionYear"
+            "$suffix Sem"
+        } else semStr
+        return "$branch - $sem$admissionYearText"
+    }
+    return ""
+}

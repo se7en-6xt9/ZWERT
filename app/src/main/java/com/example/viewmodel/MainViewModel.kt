@@ -12,6 +12,9 @@ import com.example.data.ScheduleSlotEntity
 import com.example.data.StudentEntity
 import com.example.data.AttendanceRecordEntity
 import com.example.models.UploadData
+import com.example.models.CourseUpload
+import com.example.models.StudentUpload
+import com.example.models.ScheduleSlotUpload
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.FirebaseFirestore
@@ -176,61 +179,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     fun loadDummyData() {
-        val currentDay = LocalDate.now().dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH)
-        val dummyJson = """
-        {
-          "courses": [
-            {
-              "id": "CS301",
-              "name": "Database Management Systems",
-              "code": "CS301",
-              "credits": 4,
-              "students": [
-                { "id": "S1", "name": "Sakshi Sharma", "rollNumber": "24BCS025" },
-                { "id": "S2", "name": "Rahul Verma", "rollNumber": "24BCS026" },
-                { "id": "S3", "name": "Priya Singh", "rollNumber": "24BCS027" }
-              ]
-            },
-            {
-              "id": "CS302",
-              "name": "Data Structures & Algorithms",
-              "code": "CS302",
-              "credits": 4,
-              "students": [
-                { "id": "S1", "name": "Sakshi Sharma", "rollNumber": "24BCS025" }
-              ]
-            }
-          ],
-          "weeklySchedule": [
-            {
-              "id": "CS301_1",
-              "courseId": "CS301",
-              "dayOfWeek": "$currentDay",
-              "startTime": "09:00",
-              "endTime": "10:30",
-              "room": "Room 401",
-              "section": "A"
-            },
-            {
-              "id": "CS302_1",
-              "courseId": "CS302",
-              "dayOfWeek": "$currentDay",
-              "startTime": "11:00",
-              "endTime": "12:30",
-              "room": "Lab 2",
-              "section": "B"
-            }
-          ]
-        }
-        """.trimIndent()
         viewModelScope.launch {
             try {
-                val moshi = Moshi.Builder().build()
-                val adapter = moshi.adapter(UploadData::class.java)
-                val data = adapter.fromJson(dummyJson)
-                if (data != null) {
-                    repository.processUploadData(data)
+                val days = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+                
+                val courses = listOf(
+                    CourseUpload("CSE-4SEM-A-DBMS", "Database Management Systems", "CS301", 4, listOf(
+                        StudentUpload("S1", "Sakshi Sharma", "24BCS025"),
+                        StudentUpload("S2", "Rahul Verma", "24BCS026"),
+                        StudentUpload("S3", "Priya Singh", "24BCS027")
+                    )),
+                    CourseUpload("CSE-4SEM-B-DSA", "Data Structures & Algorithms", "CS302", 4, listOf(
+                        StudentUpload("S4", "Amit Kumar", "24BCS028"),
+                        StudentUpload("S5", "Neha Gupta", "24BCS029")
+                    )),
+                    CourseUpload("CSE-6SEM-A-OS", "Operating Systems", "CS303", 4, listOf(
+                        StudentUpload("S6", "Vikram Singh", "24BCS030")
+                    )),
+                    CourseUpload("ECE-4SEM-A-CN", "Computer Networks", "CS304", 4, listOf(
+                        StudentUpload("S7", "Pooja Patel", "24BCS031")
+                    )),
+                    CourseUpload("IT-5SEM-A-SE", "Software Engineering", "CS305", 4, listOf(
+                        StudentUpload("S8", "Arjun Reddy", "24BCS032")
+                    ))
+                )
+
+                val weeklySchedule = mutableListOf<ScheduleSlotUpload>()
+                var slotIdCounter = 1
+
+                for (day in days) {
+                    weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-4SEM-A-DBMS", day, "09:00", "10:30", "Room 401", "A"))
+                    weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-4SEM-B-DSA", day, "10:30", "11:30", "Lab 2", "B"))
+                    // Break 11:30 - 12:00
+                    weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-6SEM-A-OS", day, "12:00", "13:30", "Room 305", "A"))
+                    // Break 13:30 - 14:30
+                    weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "ECE-4SEM-A-CN", day, "14:30", "15:30", "Lab 1", "C"))
+                    weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "IT-5SEM-A-SE", day, "15:30", "17:00", "Room 201", "A"))
                 }
+                
+                val data = UploadData(courses, weeklySchedule)
+                repository.processUploadData(data)
             } catch (e: Throwable) {
                 e.printStackTrace()
             }
