@@ -704,20 +704,21 @@ fun ExpandableFAB(navController: NavController) {
                     containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                     contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                 ) {
-                    Icon(Icons.Default.Upload, "Import Timetable")
+                    Icon(Icons.Default.AutoAwesome, "AI Import")
+                }
+                SmallFloatingActionButton(
+                    onClick = { navController.navigate("add_edit_batch") },
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                ) {
+                    Icon(Icons.Default.Create, "Manual Add")
                 }
                 SmallFloatingActionButton(
                     onClick = { navController.navigate("manage_classes") },
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                 ) {
-                    Icon(Icons.Default.Edit, "Edit")
-                }
-                SmallFloatingActionButton(
-                    onClick = { navController.navigate("manage_classes") },
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.error
-                ) {
-                    Icon(Icons.Default.Delete, "Delete")
+                    Icon(Icons.Default.Settings, "Manage Classes")
                 }
             }
         }

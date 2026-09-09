@@ -107,6 +107,10 @@ class MainActivity : ComponentActivity() {
                         composable("manage_classes") {
                             com.example.ui.screens.ManageClassesScreen(navController = navController, viewModel = viewModel)
                         }
+                        composable("add_edit_batch?batchId={batchId}", arguments = listOf(androidx.navigation.navArgument("batchId") { nullable = true; defaultValue = null })) { backStackEntry ->
+                            val batchId = backStackEntry.arguments?.getString("batchId")
+                            com.example.ui.screens.AddEditBatchScreen(navController = navController, viewModel = viewModel, batchId = batchId)
+                        }
                         composable("attendance_report/{courseId}") { backStackEntry ->
                             val courseId = backStackEntry.arguments?.getString("courseId") ?: return@composable
                             com.example.ui.screens.AttendanceReportScreen(navController = navController, viewModel = viewModel, courseId = courseId)

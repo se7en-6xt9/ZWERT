@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -112,6 +113,12 @@ fun ManageClassesScreen(navController: NavController, viewModel: MainViewModel) 
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                            }
+                            IconButton(
+                                onClick = { navController.navigate("add_edit_batch?batchId=${course.id}") },
+                                colors = IconButtonDefaults.iconButtonColors(contentColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Icon(androidx.compose.material.icons.Icons.Default.Edit, contentDescription = "Edit Class")
                             }
                             IconButton(
                                 onClick = { courseToDelete = course.id },

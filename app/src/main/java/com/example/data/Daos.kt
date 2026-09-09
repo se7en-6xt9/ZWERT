@@ -23,6 +23,9 @@ interface AppDao {
     suspend fun getScheduleSlotById(id: String): ScheduleSlotEntity?
     @Query("SELECT * FROM schedule_slots WHERE courseId = :courseId ORDER BY dayOfWeek, startTime ASC")
     fun getScheduleSlotsForCourse(courseId: String): Flow<List<ScheduleSlotEntity>>
+
+    @Query("SELECT * FROM schedule_slots WHERE courseId = :courseId")
+    suspend fun getScheduleSlotsForCourseSync(courseId: String): List<ScheduleSlotEntity>
     
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAttendance(record: AttendanceRecordEntity)
