@@ -12,7 +12,7 @@ object AiHelper {
         return withContext(Dispatchers.IO) {
             try {
                 val generativeModel = GenerativeModel(
-                    modelName = "gemini-1.5-flash",
+                    modelName = "gemini-1.5-pro",
                     apiKey = apiKey,
                     generationConfig = generationConfig {
                         responseMimeType = "application/json"

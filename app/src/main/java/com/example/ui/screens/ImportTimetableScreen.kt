@@ -39,8 +39,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel) {
     var rawText by remember { mutableStateOf("") }
-    var apiKey by remember { mutableStateOf("AIzaSyDwM0mgO8we85qwh3Uq8QQoQdF1W8oyNBA") }
-    var isLoading by remember { mutableStateOf(false) }
+        var isLoading by remember { mutableStateOf(false) }
     var aiStatusText by remember { mutableStateOf("") }
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var selectedBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -108,13 +107,7 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
             Text("AI-Powered Data Entry", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text("Upload a photo, paste JSON, or add raw text. The AI will extract the timetable for you.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             
-            OutlinedTextField(
-                value = apiKey,
-                onValueChange = { apiKey = it },
-                label = { Text("Gemini API Key") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            )
+            
             
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
                 Button(
@@ -208,14 +201,11 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
                                 Toast.makeText(context, "Add text or an image", Toast.LENGTH_SHORT).show()
                                 return@Button
                             }
-                            if (apiKey.isBlank()) {
-                                Toast.makeText(context, "API Key is required for AI", Toast.LENGTH_SHORT).show()
-                                return@Button
-                            }
+                            
                             isLoading = true
                             aiStatusText = "AI is thinking..."
                             coroutineScope.launch {
-                                val aiResult = com.example.viewmodel.AiHelper.parseTimetableData(rawText, selectedBitmap, apiKey)
+                                val aiResult = com.example.viewmodel.AiHelper.parseTimetableData(rawText, selectedBitmap, com.example.BuildConfig.GEMINI_API_KEY)
                                 if (aiResult != null) {
                                     aiStatusText = "Saving data..."
                                     // Sometimes AI returns markdown wrapped JSON

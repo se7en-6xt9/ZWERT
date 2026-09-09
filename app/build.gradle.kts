@@ -122,6 +122,8 @@ dependencies {
   implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
   implementation(libs.generativeai)
+  implementation(libs.ktor.client.core)
+  implementation(libs.ktor.client.okhttp)
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
