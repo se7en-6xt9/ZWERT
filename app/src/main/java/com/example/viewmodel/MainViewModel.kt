@@ -269,38 +269,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun importTimetableFromJson(jsonString: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+        fun parseTimetableJson(jsonString: String): com.example.data.ImportTimetableData? {
+        return try {
+            val moshi = com.squareup.moshi.Moshi.Builder().build()
+            val adapter = moshi.adapter(com.example.data.ImportTimetableData::class.java)
+            val parsed = adapter.fromJson(jsonString)
+            android.util.Log.d("TimetableImport", "Parsed successfully. Found ${parsed?.batches?.size ?: 0} batches.")
+            parsed
+        } catch (e: Exception) {
+            android.util.Log.e("TimetableImport", "JSON Parse failed: ${e.message}")
+            null
+        }
+    }
+    
+    fun saveReviewedTimetable(data: com.example.data.ImportTimetableData, onSuccess: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
-                val moshi = Moshi.Builder().build()
-                val adapter = moshi.adapter(com.example.data.ImportTimetableData::class.java)
-                val data = adapter.fromJson(jsonString)
-                if (data != null) {
-                    val currentAuth = auth
-                    val currentFirestore = firestore
-                    val uid = currentAuth?.currentUser?.uid
+                android.util.Log.d("TimetableImport", "Starting save for ${data.batches?.size ?: 0} batches.")
+                val currentAuth = auth
+                val currentFirestore = firestore
+                val uid = currentAuth?.currentUser?.uid
 
-                    if (currentFirestore != null && uid != null) {
-                        Log.d("FirebaseSync", "User UID: $uid")
-                        Log.d("FirebaseSync", "Writing to path: users/$uid/batches")
-                        
-                        val batchesRef = currentFirestore.collection("users").document(uid).collection("batches")
-                        data.batches?.forEach { batch ->
-                            val docId = batch.batchId ?: java.util.UUID.randomUUID().toString()
-                            batchesRef.document(docId).set(batch).await()
-                        }
-                        
-                        Log.d("FirebaseSync", "Write success: true")
+                if (currentFirestore != null && uid != null) {
+                    val batchesRef = currentFirestore.collection("users").document(uid).collection("batches")
+                    data.batches?.forEach { batch ->
+                        val docId = batch.batchId ?: java.util.UUID.randomUUID().toString()
+                        val updatedBatch = batch.copy(batchId = docId)
+                        batchesRef.document(docId).set(updatedBatch).await()
+                        android.util.Log.d("TimetableImport", "Saved batch $docId to Firestore.")
                     }
-
-                    // Proceed to save local state ONLY AFTER Firebase succeeds
-                    repository.processTimetableImport(data)
-                    onSuccess()
-                } else {
-                    onError("Failed to parse JSON. Please check the format.")
                 }
+
+                repository.processTimetableImport(data)
+                android.util.Log.d("TimetableImport", "Local database sync complete.")
+                onSuccess()
             } catch (e: Throwable) {
-                Log.e("FirebaseSync", "Write failed: ${e.message}")
+                android.util.Log.e("TimetableImport", "Write failed: ${e.message}", e)
                 onError("Error parsing or syncing JSON: ${e.message}")
             }
         }
@@ -314,19 +318,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val uid = currentAuth?.currentUser?.uid
 
                 if (currentFirestore != null && uid != null) {
-                    Log.d("FirebaseSync", "Deleting course: $courseId from Firestore")
                     currentFirestore.collection("users").document(uid)
                         .collection("batches").document(courseId).delete().await()
                 }
 
-                // Delete locally
                 repository.dao.deleteCourseById(courseId)
                 repository.dao.deleteStudentsByCourseId(courseId)
                 repository.dao.deleteScheduleSlotsByCourseId(courseId)
                 
                 onComplete()
             } catch (e: Throwable) {
-                Log.e("FirebaseSync", "Failed to delete course: ${e.message}")
+                android.util.Log.e("FirebaseSync", "Failed to delete course: ${e.message}")
                 onError("Failed to delete class: ${e.message}")
             }
         }

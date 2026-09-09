@@ -1,6 +1,7 @@
 package com.example.viewmodel
 
 import android.graphics.Bitmap
+import android.util.Log
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.ai.client.generativeai.type.content
 import com.google.ai.client.generativeai.type.generationConfig
@@ -8,92 +9,116 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 object AiHelper {
+    private const val TAG = "AiHelper"
+
     suspend fun parseTimetableData(rawText: String, image: Bitmap?, apiKey: String): String? {
         return withContext(Dispatchers.IO) {
-            try {
-                val generativeModel = GenerativeModel(
-                    modelName = "gemini-1.5-pro",
-                    apiKey = apiKey,
-                    systemInstruction = content { 
-                        text("""
-                            You are an advanced Data Extraction & OCR AI for an academic timetable app. 
-                            Your only job is to consume messy data (text, malformed JSON, or images) and output perfectly formatted, strict JSON matching our exact schema. 
-                            If the user provides a broken JSON, fix it. If the user provides a picture, use OCR to understand it. 
-                            If data is missing, make intelligent guesses or fill with sensible placeholders (e.g. 'Unknown Course', 'TBD', or generate unique IDs). 
-                            NEVER fail to output the JSON structure.
-                        """.trimIndent()) 
-                    },
-                    generationConfig = generationConfig {
-                        responseMimeType = "application/json"
-                        temperature = 0.2f
-                    }
-                )
+            val systemPrompt = """
+                You are a timetable data extraction engine. You will be given a 
+                teacher's timetable (as an image, text, or document). Extract the 
+                schedule and return ONLY valid JSON matching this exact schema — no 
+                markdown formatting, no code fences, no explanation, no extra text 
+                before or after the JSON.
 
-                val prompt = """
-                    Analyze the following input. It might be a messy text snippet, a broken JSON file, or an uploaded image (OCR required).
-                    
-                    Your goal is to extract whatever information is available and map it to the STRICT JSON schema below.
-                    
-                    # Core Rules & Edge Cases:
-                    1. **Broken JSON Handling**: If the text provided looks like a malformed JSON file (missing quotes, trailing commas, missing brackets), FIX it and map it to the requested schema.
-                    2. **OCR & Image Extraction**: If an image is provided, thoroughly scan it. Time grids become 'weeklySchedule', lists of names become 'students'.
-                    3. **Partial Data Recovery**: 
-                       - If you only find a list of students, wrap them inside a single batch with a dummy course ("Imported Course").
-                       - If you only find a timetable, wrap it inside a batch with an empty students list.
-                       - We MUST return at least one batch if any data is found.
-                    4. **Never Omit Fields**: Even if a field is unknown, provide it with an empty string "", or a sensible default.
-                    5. **Auto-Generate IDs**: Any missing 'id', 'batchId', 'rollNumber' MUST be auto-generated (e.g. "batch_001", "stu_001").
-                    6. **Schedule Formatting**: Standardize days to 3 letters (Mon, Tue, Wed, Thu, Fri, Sat, Sun). Clean up times to "9:00 AM - 10:00 AM".
+                Rules:
+                1. Every unique combination of year + semester + section + course is 
+                   one "batch" — group accordingly, don't create duplicate batches 
+                   for the same combination.
+                2. For each batch, list EVERY weekly occurrence in "weeklySchedule" 
+                   — a class can be any duration (30 minutes to 8+ hours) and any 
+                   time of day (e.g. "6:00 AM - 7:00 AM", "7:00 PM - 9:00 PM") — do 
+                   not assume standard class lengths or standard hours, extract the 
+                   ACTUAL times shown.
+                3. If the timetable includes a student roster, list each student 
+                   once under that batch's "students" array. If no student list is 
+                   present in the source, return an empty array — do not invent 
+                   names.
+                4. For ANY field where the information is not present, ambiguous, or 
+                   you are not confident, use JSON null — NEVER guess, invent, or 
+                   hallucinate a value to fill a gap.
+                5. Ignore any information in the source that doesn't map to a field 
+                   in this schema (e.g. credit hours, faculty designation notes, 
+                   footer text) — do not add extra keys not defined in the schema.
+                6. Return ONLY the JSON object. No ```json fences, no commentary.
 
-                    # Target Strict Schema:
+                Schema:
+                {
+                  "teacher": { "name": "String|null", "id": "String|null" },
+                  "batches": [
                     {
-                      "teacher": { "name": "String", "id": "String" },
-                      "batches": [
-                        {
-                          "batchId": "String",
-                          "year": "String",
-                          "semester": "String",
-                          "course": { "code": "String", "name": "String" },
-                          "section": "String",
-                          "location": "String",
-                          "weeklySchedule": [
-                            { "day": "String", "time": "String", "location": "String" }
-                          ],
-                          "students": [
-                            { "id": "String", "name": "String", "rollNumber": "String" }
-                          ]
+                      "batchId": "String",
+                      "year": "String|null",
+                      "semester": "String|null",
+                      "course": { "code": "String|null", "name": "String|null" },
+                      "section": "String|null",
+                      "location": "String|null",
+                      "weeklySchedule": [ { "day": "String", "time": "String|null", "location": "String|null" } ],
+                      "students": [ { "id": "String", "name": "String", "rollNumber": "String|null" } ]
+                    }
+                  ]
+                }
+            """.trimIndent()
+
+            val generativeModel = GenerativeModel(
+                modelName = "gemini-2.0-flash",
+                apiKey = apiKey,
+                systemInstruction = content { text(systemPrompt) },
+                generationConfig = generationConfig {
+                    responseMimeType = "application/json"
+                    temperature = 0.1f
+                }
+            )
+
+            var attempt = 0
+            var maxAttempts = 2
+            var lastError: String? = null
+            var currentPromptText = rawText.ifBlank { "Extract the timetable from the image." }
+
+            while (attempt < maxAttempts) {
+                try {
+                    Log.d(TAG, "Starting extraction attempt ${attempt + 1}")
+                    val inputContent = content {
+                        if (image != null && attempt == 0) {
+                            image(image)
                         }
-                      ]
+                        text(currentPromptText)
+                    }
+
+                    val response = generativeModel.generateContent(inputContent)
+                    Log.d(TAG, "Raw response received. Finish Reason: ${response.candidates.firstOrNull()?.finishReason}")
+                    
+                    var rawJson = response.text ?: ""
+                    Log.d(TAG, "Raw JSON Output length: ${rawJson.length}")
+
+                    if (rawJson.contains("```json")) {
+                        rawJson = rawJson.substringAfter("```json").substringBeforeLast("```")
+                    } else if (rawJson.contains("```")) {
+                        rawJson = rawJson.substringAfter("```").substringBeforeLast("```")
                     }
                     
-                    Output ONLY valid JSON. No markdown blocks, no conversational text.
-                    
-                    Raw Input:
-                    ${rawText.ifBlank { "No text provided, rely on image if present." }}
-                """.trimIndent()
-
-                val inputContent = content {
-                    if (image != null) {
-                        image(image)
+                    rawJson = rawJson.trim()
+                    val startIndex = rawJson.indexOf('{')
+                    val endIndex = rawJson.lastIndexOf('}')
+                    if (startIndex != -1 && endIndex != -1 && endIndex >= startIndex) {
+                        rawJson = rawJson.substring(startIndex, endIndex + 1)
                     }
-                    text(prompt)
-                }
 
-                val response = generativeModel.generateContent(inputContent)
-                
-                // Cleanup: Extract JSON in case Gemini wraps it in markdown despite instructions
-                var rawJson = response.text ?: ""
-                if (rawJson.contains("```json")) {
-                    rawJson = rawJson.substringAfter("```json").substringBeforeLast("```")
-                } else if (rawJson.contains("```")) {
-                    rawJson = rawJson.substringAfter("```").substringBeforeLast("```")
+                    // Quick validation to see if it's parsable JSON
+                    if (rawJson.startsWith("{") && rawJson.endsWith("}")) {
+                        return@withContext rawJson
+                    } else {
+                        throw Exception("Output is not valid JSON objects.")
+                    }
+
+                } catch (e: Exception) {
+                    lastError = e.message
+                    Log.e(TAG, "Extraction failed on attempt ${attempt + 1}: ${e.message}", e)
+                    attempt++
+                    currentPromptText = "Your previous response was not valid JSON. Return ONLY the corrected valid JSON matching the schema, nothing else. Previous output failed with: ${e.message}"
                 }
-                
-                rawJson.trim()
-            } catch (e: Exception) {
-                e.printStackTrace()
-                null
             }
+            Log.e(TAG, "All extraction attempts failed. Last error: $lastError")
+            null
         }
     }
 }
