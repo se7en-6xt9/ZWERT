@@ -17,7 +17,7 @@ interface AppDao {
     fun getStudentsByCourse(courseId: String): Flow<List<StudentEntity>>
     @Query("SELECT * FROM students WHERE courseId = :courseId ORDER BY rollNumber ASC")
     suspend fun getStudentsByCourseSync(courseId: String): List<StudentEntity>
-    @Query("SELECT * FROM schedule_slots WHERE dayOfWeek = :dayOfWeek ORDER BY startTime ASC")
+    @Query("SELECT * FROM schedule_slots WHERE dayOfWeek = :dayOfWeek OR dayOfWeek = substr(:dayOfWeek, 1, 3) OR lower(dayOfWeek) = lower(:dayOfWeek) ORDER BY startTime ASC")
     fun getScheduleForDay(dayOfWeek: String): Flow<List<ScheduleSlotEntity>>
     @Query("SELECT * FROM schedule_slots WHERE id = :id LIMIT 1")
     suspend fun getScheduleSlotById(id: String): ScheduleSlotEntity?

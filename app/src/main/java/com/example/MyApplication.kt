@@ -8,6 +8,9 @@ import android.util.Log
 import com.example.ui.screens.CrashActivity
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreSettings
+import com.google.firebase.firestore.PersistentCacheSettings
 import java.io.PrintWriter
 import java.io.StringWriter
 
@@ -88,6 +91,22 @@ class MyApplication : Application() {
                 Log.i("MyApplication", "FirebaseApp initialized via fallback FirebaseOptions")
             } else {
                 Log.i("MyApplication", "FirebaseApp initialized successfully")
+            }
+
+            // Configure Firestore offline persistence with persistent cache
+            try {
+                val db = FirebaseFirestore.getInstance()
+                val settings = FirebaseFirestoreSettings.Builder()
+                    .setLocalCacheSettings(
+                        PersistentCacheSettings.newBuilder()
+                            .setSizeBytes(FirebaseFirestoreSettings.CACHE_SIZE_UNLIMITED)
+                            .build()
+                    )
+                    .build()
+                db.firestoreSettings = settings
+                Log.i("MyApplication", "Firestore offline persistence enabled successfully with unlimited local cache.")
+            } catch (e: Exception) {
+                Log.w("MyApplication", "Firestore offline settings already set or error: ${e.message}")
             }
         } catch (e: Exception) {
             Log.e("MyApplication", "Fatal error during Firebase initialization", e)

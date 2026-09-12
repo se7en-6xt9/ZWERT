@@ -559,7 +559,7 @@ fun AddEditBatchScreen(
                                                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                                                         verticalArrangement = Arrangement.spacedBy(8.dp)
                                                     ) {
-                                                        listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Sun").forEach { dayOpt ->
+                                                        listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun").forEach { dayOpt ->
                                                             val isSelected = block.selectedDays.contains(dayOpt)
                                                             FilterChip(
                                                                 selected = isSelected,
@@ -747,17 +747,36 @@ fun AddEditBatchScreen(
                                     Toast.makeText(context, "Course name is required.", Toast.LENGTH_SHORT).show()
                                     return@Button
                                 }
-                                if (scheduleBlocks.any { it.selectedDays.isEmpty() }) {
+                                val validBlocks = scheduleBlocks.filter { it.timeRange.isNotBlank() }
+                                if (validBlocks.any { it.selectedDays.isEmpty() }) {
                                     Toast.makeText(context, "All time slots must have at least one day selected.", Toast.LENGTH_SHORT).show()
                                     return@Button
                                 }
+                                if (validBlocks.isEmpty() && selectedGridCells.isEmpty()) {
+                                    Toast.makeText(context, "Please configure at least one class schedule slot.", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+
+                                fun normalizeDayToFull(d: String): String {
+                                    val clean = d.trim().lowercase()
+                                    return when {
+                                        clean.startsWith("mon") -> "Monday"
+                                        clean.startsWith("tue") -> "Tuesday"
+                                        clean.startsWith("wed") -> "Wednesday"
+                                        clean.startsWith("thu") -> "Thursday"
+                                        clean.startsWith("fri") -> "Friday"
+                                        clean.startsWith("sat") -> "Saturday"
+                                        clean.startsWith("sun") -> "Sunday"
+                                        else -> d.trim().replaceFirstChar { it.uppercase() }
+                                    }
+                                }
                                 
-                                val finalSchedules = scheduleBlocks.filter { it.timeRange.isNotBlank() }.flatMap { block ->
+                                val finalSchedules = validBlocks.flatMap { block ->
                                     block.selectedDays.map { day ->
-                                        ScheduleImport(day = day, time = block.timeRange, location = block.location.takeIf { it.isNotBlank() })
+                                        ScheduleImport(day = normalizeDayToFull(day), time = block.timeRange, location = block.location.takeIf { it.isNotBlank() })
                                     }
                                 } + selectedGridCells.map { cell ->
-                                    ScheduleImport(day = cell.first, time = cell.second, location = defaultLocation.takeIf { it.isNotBlank() })
+                                    ScheduleImport(day = normalizeDayToFull(cell.first), time = cell.second, location = defaultLocation.takeIf { it.isNotBlank() })
                                 }
                                 
                                 val finalBatch = BatchImport(
@@ -990,11 +1009,16 @@ fun AddEditBatchScreen(
                                                                 .clip(RoundedCornerShape(8.dp))
                                                                 .bounceClick(haptic) {
                                                                     if (isBooked && !isSelected) {
-                                                                        Toast.makeText(context, "Warning: Slot is already booked by another class.", Toast.LENGTH_SHORT).show()
+                                                                        Toast.makeText(context, "Slot is already booked and cannot be selected.", Toast.LENGTH_SHORT).show()
+                                                                        return@bounceClick
                                                                     }
                                                                     val newSet = selectedGridCells.toMutableSet()
                                                                     val pair = Pair(day, hour)
-                                                                    if(isSelected) newSet.remove(pair) else newSet.add(pair)
+                                                                    if (isSelected) {
+                                                                        newSet.remove(pair)
+                                                                    } else {
+                                                                        newSet.add(pair)
+                                                                    }
                                                                     selectedGridCells = newSet
                                                                 }
                                                                 .graphicsLayer {

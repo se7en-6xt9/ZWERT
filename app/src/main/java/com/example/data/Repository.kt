@@ -36,7 +36,17 @@ class Repository(val dao: AppDao) {
                 }
                 batch.weeklySchedule?.forEach { schedule ->
                     val slotId = "slot_${java.util.UUID.randomUUID()}"
-                    val day = schedule.day ?: "Unknown"
+                    val rawDay = schedule.day ?: "Unknown"
+                    val day = when (rawDay.trim().lowercase()) {
+                        "mon", "monday" -> "Monday"
+                        "tue", "tues", "tuesday" -> "Tuesday"
+                        "wed", "wednesday" -> "Wednesday"
+                        "thu", "thur", "thurs", "thursday" -> "Thursday"
+                        "fri", "friday" -> "Friday"
+                        "sat", "saturday" -> "Saturday"
+                        "sun", "sunday" -> "Sunday"
+                        else -> rawDay.trim().replaceFirstChar { it.uppercase() }
+                    }
                     val timeString = schedule.time ?: ""
                     val loc = schedule.location?.takeIf { it.isNotBlank() } ?: defaultLocation
                     val parts = timeString.split("-").map { it.trim() }

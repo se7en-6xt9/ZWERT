@@ -7,14 +7,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Business
-import androidx.compose.material.icons.filled.Logout
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.DeleteForever
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -251,6 +244,38 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                         Switch(
                             checked = isDarkTheme,
                             onCheckedChange = { viewModel.toggleDarkTheme() }
+                        )
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                    var isSoundFeedbackEnabled by remember { mutableStateOf(com.example.ui.util.SoundFeedbackHelper.isSoundEnabled(context)) }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = if (isSoundFeedbackEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                                contentDescription = "Sound Feedback",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column {
+                                Text("Attendance Audio", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (isSoundFeedbackEnabled) "Sound Effects Enabled" else "Muted", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                        Switch(
+                            checked = isSoundFeedbackEnabled,
+                            onCheckedChange = {
+                                com.example.ui.util.SoundFeedbackHelper.setSoundEnabled(context, it)
+                                isSoundFeedbackEnabled = it
+                            }
                         )
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))

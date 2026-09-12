@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
+import com.example.data.CourseEntity
 import com.example.data.ScheduleSlotEntity
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
@@ -151,6 +152,14 @@ fun DashboardContent(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
+                // Auto-sync from cloud if logged in
+                LaunchedEffect(Unit) {
+                    viewModel.syncDataFromFirebase()
+                }
+
+                val allCourses by viewModel.getAllCourses().collectAsState(initial = emptyList())
+                val courseMap = remember(allCourses) { allCourses.associateBy { it.id } }
+
                 // 2. DAY-SELECTOR ROW WITH SLIDING INDICATOR & EDGE FADES
                 DaySelectorCard(
                     weekDates = weekDates,
@@ -217,6 +226,7 @@ fun DashboardContent(
                                     StaggeredAnimatedItem(index = index) {
                                         GlassLectureCard(
                                             slot = slot,
+                                            course = courseMap[slot.courseId],
                                             isLive = isLive,
                                             timeHint = timeHint,
                                             onClick = { navController.navigate("lecture_view/${slot.id}") }
@@ -255,6 +265,8 @@ fun ElevatedFacultyProfileHeader(
     accentColor: Color
 ) {
     val userProfile by viewModel.userProfile.collectAsState()
+    val isConnected by viewModel.isNetworkConnected.collectAsState()
+    val isSyncing by viewModel.isSyncing.collectAsState()
     val name = userProfile?.name?.takeIf { it.isNotBlank() } ?: "Prof. Yash Thakur"
     val initials = name.split(" ").mapNotNull { it.firstOrNull()?.uppercase() }.take(2).joinToString("")
 
@@ -335,7 +347,12 @@ fun ElevatedFacultyProfileHeader(
                     )
                 }
 
-                // Active status indicator
+                // Active network status indicator
+                val statusDotColor = when {
+                    !isConnected -> Color(0xFFF59E0B)
+                    isSyncing -> accentColor
+                    else -> Color(0xFF10B981)
+                }
                 Box(
                     modifier = Modifier
                         .size(13.dp)
@@ -343,7 +360,7 @@ fun ElevatedFacultyProfileHeader(
                         .background(MaterialTheme.colorScheme.surface)
                         .padding(2.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF10B981))
+                        .background(statusDotColor)
                 )
             }
 
@@ -395,6 +412,38 @@ fun ElevatedFacultyProfileHeader(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(2.dp))
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val statusDotColor = when {
+                        !isConnected -> Color(0xFFF59E0B)
+                        isSyncing -> accentColor
+                        else -> Color(0xFF10B981)
+                    }
+                    val statusText = when {
+                        !isConnected -> "Offline • Persistent Cache"
+                        isSyncing -> "Syncing with cloud..."
+                        else -> "Cloud synced"
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(statusDotColor)
+                    )
+                    Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        color = statusDotColor
                     )
                 }
             }
@@ -636,6 +685,7 @@ fun DaySelectorCard(
 @Composable
 fun GlassLectureCard(
     slot: ScheduleSlotEntity,
+    course: CourseEntity? = null,
     isLive: Boolean = false,
     timeHint: String? = null,
     onClick: () -> Unit
@@ -676,75 +726,95 @@ fun GlassLectureCard(
             )
             
             Column(modifier = Modifier.padding(20.dp).fillMaxWidth()) {
-                val parts = slot.courseId.split("-")
-                var subjectText = slot.courseId
-                var batchText = ""
+                val courseName = course?.name?.takeIf { it.isNotBlank() }
+                val courseCode = course?.code?.takeIf { it.isNotBlank() }
 
-                if (parts.size >= 4) {
-                    val branch = parts[0]
-                    val semStr = parts[1]
-                    val subjectCode = parts.drop(3).joinToString("-") 
-                    
-                    var admissionYearText = ""
-                    val sem = if (semStr.endsWith("SEM", ignoreCase = true)) {
-                        val num = semStr.dropLast(3)
-                        val suffix = when (num) {
-                            "1" -> "1st"
-                            "2" -> "2nd"
-                            "3" -> "3rd"
-                            "4" -> "4th"
-                            "5" -> "5th"
-                            "6" -> "6th"
-                            "7" -> "7th"
-                            "8" -> "8th"
-                            else -> num
-                        }
-                        val currentYear = LocalDate.now().year
-                        val currentMonth = LocalDate.now().monthValue
-                        val academicYearStart = if (currentMonth >= 7) currentYear else currentYear - 1
-                        val semInt = num.toIntOrNull() ?: 1
-                        val admissionYear = academicYearStart - ((semInt - 1) / 2)
-                        admissionYearText = " - $admissionYear"
-                        "$suffix Sem"
-                    } else semStr
-                    
-                    val expandedSubject = when(subjectCode.uppercase()) {
-                        "DBMS" -> "Database Management Systems"
-                        "OS" -> "Operating Systems"
-                        "CN" -> "Computer Networks"
-                        "DSA" -> "Data Structures & Algorithms"
-                        "AI" -> "Artificial Intelligence"
-                        "ML" -> "Machine Learning"
-                        "SE" -> "Software Engineering"
-                        "CS301" -> "Computer Architecture"
-                        "CS302" -> "Computer Networks"
-                        else -> subjectCode
+                val subjectText: String
+                val batchText: String
+
+                if (!courseName.isNullOrBlank()) {
+                    subjectText = courseName
+                    batchText = if (!courseCode.isNullOrBlank() && courseCode != courseName) {
+                        if (slot.section.isNotBlank()) "$courseCode • Sec ${slot.section}" else courseCode
+                    } else if (slot.section.isNotBlank()) {
+                        "Sec ${slot.section}"
+                    } else {
+                        ""
                     }
-                    subjectText = expandedSubject
-                    batchText = "$branch - $sem$admissionYearText"
-                } else if (parts.size == 3) {
-                    val branch = parts[0]
-                    val semStr = parts[1]
-                    var admissionYearText = ""
-                    val sem = if (semStr.endsWith("SEM", ignoreCase = true)) {
-                        val num = semStr.dropLast(3)
-                        val suffix = when (num) { 
-                            "1" -> "1st"
-                            "2" -> "2nd"
-                            "3" -> "3rd"
-                            "4" -> "4th"
-                            else -> num 
+                } else if (!courseCode.isNullOrBlank()) {
+                    subjectText = courseCode
+                    batchText = if (slot.section.isNotBlank()) "Sec ${slot.section}" else ""
+                } else {
+                    val parts = slot.courseId.split("-")
+                    if (parts.size >= 4 && parts[1].contains("SEM", ignoreCase = true)) {
+                        val branch = parts[0]
+                        val semStr = parts[1]
+                        val subjectCode = parts.drop(3).joinToString("-") 
+                        
+                        var admissionYearText = ""
+                        val sem = if (semStr.endsWith("SEM", ignoreCase = true)) {
+                            val num = semStr.dropLast(3)
+                            val suffix = when (num) {
+                                "1" -> "1st"
+                                "2" -> "2nd"
+                                "3" -> "3rd"
+                                "4" -> "4th"
+                                "5" -> "5th"
+                                "6" -> "6th"
+                                "7" -> "7th"
+                                "8" -> "8th"
+                                else -> num
+                            }
+                            val currentYear = LocalDate.now().year
+                            val currentMonth = LocalDate.now().monthValue
+                            val academicYearStart = if (currentMonth >= 7) currentYear else currentYear - 1
+                            val semInt = num.toIntOrNull() ?: 1
+                            val admissionYear = academicYearStart - ((semInt - 1) / 2)
+                            admissionYearText = " - $admissionYear"
+                            "$suffix Sem"
+                        } else semStr
+                        
+                        val expandedSubject = when(subjectCode.uppercase()) {
+                            "DBMS" -> "Database Management Systems"
+                            "OS" -> "Operating Systems"
+                            "CN" -> "Computer Networks"
+                            "DSA" -> "Data Structures & Algorithms"
+                            "AI" -> "Artificial Intelligence"
+                            "ML" -> "Machine Learning"
+                            "SE" -> "Software Engineering"
+                            "CS301" -> "Computer Architecture"
+                            "CS302" -> "Computer Networks"
+                            else -> subjectCode
                         }
-                        val currentYear = LocalDate.now().year
-                        val currentMonth = LocalDate.now().monthValue
-                        val academicYearStart = if (currentMonth >= 7) currentYear else currentYear - 1
-                        val semInt = num.toIntOrNull() ?: 1
-                        val admissionYear = academicYearStart - ((semInt - 1) / 2)
-                        admissionYearText = " - $admissionYear"
-                        "$suffix Sem"
-                    } else semStr
-                    subjectText = parts[2]
-                    batchText = "$branch - $sem$admissionYearText"
+                        subjectText = expandedSubject
+                        batchText = "$branch - $sem$admissionYearText"
+                    } else if (parts.size == 3 && parts[1].contains("SEM", ignoreCase = true)) {
+                        val branch = parts[0]
+                        val semStr = parts[1]
+                        var admissionYearText = ""
+                        val sem = if (semStr.endsWith("SEM", ignoreCase = true)) {
+                            val num = semStr.dropLast(3)
+                            val suffix = when (num) { 
+                                "1" -> "1st"
+                                "2" -> "2nd"
+                                "3" -> "3rd"
+                                "4" -> "4th"
+                                else -> num 
+                            }
+                            val currentYear = LocalDate.now().year
+                            val currentMonth = LocalDate.now().monthValue
+                            val academicYearStart = if (currentMonth >= 7) currentYear else currentYear - 1
+                            val semInt = num.toIntOrNull() ?: 1
+                            val admissionYear = academicYearStart - ((semInt - 1) / 2)
+                            admissionYearText = " - $admissionYear"
+                            "$suffix Sem"
+                        } else semStr
+                        subjectText = parts[2]
+                        batchText = "$branch - $sem$admissionYearText"
+                    } else {
+                        subjectText = "Class Lecture"
+                        batchText = if (slot.section.isNotBlank()) "Sec ${slot.section}" else ""
+                    }
                 }
 
                 Row(

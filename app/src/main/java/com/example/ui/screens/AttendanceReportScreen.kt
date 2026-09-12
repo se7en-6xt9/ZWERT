@@ -1,6 +1,10 @@
 package com.example.ui.screens
 
+import android.annotation.SuppressLint
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,16 +19,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CalendarToday
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -32,6 +38,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.example.data.CourseEntity
 import com.example.data.ScheduleSlotEntity
 import com.example.data.StudentEntity
 import com.example.viewmodel.MainViewModel
@@ -43,71 +50,116 @@ import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 
-import android.annotation.SuppressLint
-
 @SuppressLint("NewApi")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AttendanceReportScreen(navController: NavController, viewModel: MainViewModel, courseId: String) {
     BackHandler { navController.popBackStack() }
 
+    val haptic = LocalHapticFeedback.current
+    val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
+
+    var course by remember { mutableStateOf<CourseEntity?>(null) }
     var students by remember { mutableStateOf<List<StudentEntity>>(emptyList()) }
     val slots by viewModel.getScheduleSlotsForCourse(courseId).collectAsState(initial = emptyList())
+    // Data source: genuine saved/submitted attendance records from database
     val attendance by viewModel.getAttendanceForCourse(courseId).collectAsState(initial = emptyList())
-    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    
+
     var searchQuery by remember { mutableStateOf("") }
-    
+    var showSearchBar by remember { mutableStateOf(false) }
+
+    // Dynamic bidirectional infinite scroll range state
+    var pastDaysCount by remember { mutableIntStateOf(60) }
+    var futureDaysCount by remember { mutableIntStateOf(30) }
+
     LaunchedEffect(courseId) {
+        course = viewModel.getCourseById(courseId)
         students = viewModel.getStudentsByCourseSync(courseId)
     }
 
     val filteredStudents = remember(students, searchQuery) {
         if (searchQuery.isBlank()) students
-        else students.filter { 
-            it.name.contains(searchQuery, ignoreCase = true) || 
-            it.rollNumber.contains(searchQuery, ignoreCase = true) 
+        else students.filter {
+            it.name.contains(searchQuery, ignoreCase = true) ||
+            it.rollNumber.contains(searchQuery, ignoreCase = true)
         }
     }
 
-    // Generate Dates
-    val generatedDates = remember(slots) {
-        if (slots.isEmpty()) return@remember emptyList<Pair<LocalDate, ScheduleSlotEntity>>()
+    // Dynamic generation of date sessions with slots
+    val generatedDates = remember(slots, pastDaysCount, futureDaysCount) {
         val today = LocalDate.now()
         val list = mutableListOf<Pair<LocalDate, ScheduleSlotEntity>>()
-        for (i in -45L..15L) { // Look back 45 days, forward 15 days
+        val daySlotMap = slots.groupBy { it.dayOfWeek.trim().lowercase() }
+
+        for (i in -pastDaysCount.toLong()..futureDaysCount.toLong()) {
             val d = today.plusDays(i)
-            val dayName = d.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH)
-            slots.filter { it.dayOfWeek.equals(dayName, ignoreCase = true) }.forEach { slot ->
-                list.add(Pair(d, slot))
+            val fullDay = d.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH).lowercase()
+            val shortDay = d.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).lowercase()
+
+            val matchingSlots = daySlotMap[fullDay] ?: daySlotMap[shortDay]
+            if (!matchingSlots.isNullOrEmpty()) {
+                matchingSlots.forEach { slot ->
+                    list.add(Pair(d, slot))
+                }
+            } else if (slots.isEmpty()) {
+                // If course has no slots yet, generate one default daily column
+                val defaultSlot = ScheduleSlotEntity(
+                    id = "default_${d}_$courseId",
+                    courseId = courseId,
+                    dayOfWeek = d.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH),
+                    startTime = "Session",
+                    endTime = "",
+                    room = "",
+                    section = ""
+                )
+                list.add(Pair(d, defaultSlot))
             }
         }
         list
     }
 
+    // Excel Grid Dimensions
+    val cellWidth = 78.dp
+    val cellWidthPx = with(density) { cellWidth.toPx() }
+    val leftColWidth = 195.dp
+    val headerHeight = 70.dp
+    val rowHeight = 60.dp
+    val gridBorderColor = Color(0xFFE2E8F0)
+
     val hScroll = rememberScrollState()
     val vScroll = rememberScrollState()
-    val coroutineScope = rememberCoroutineScope()
-    val density = LocalDensity.current
 
-    // Excel Dimensions
-    val cellWidth = 72.dp
-    val cellWidthPx = with(density) { cellWidth.toPx() }
-    val leftColWidth = 180.dp
-    val headerHeight = 64.dp
-    val rowHeight = 64.dp
-    val borderColor = Color(0xFFE0E0E0)
-    
-    // Jump to Today logic
+    // Default to Today's column as the first visible/leftmost column on initial load
+    var hasScrolledToToday by remember { mutableStateOf(false) }
     LaunchedEffect(generatedDates) {
-        if (generatedDates.isNotEmpty()) {
-            val todayIndex = generatedDates.indexOfFirst { it.first == LocalDate.now() }
-            if (todayIndex >= 0) {
-                hScroll.scrollTo((todayIndex * cellWidthPx).toInt())
+        if (!hasScrolledToToday && generatedDates.isNotEmpty()) {
+            val today = LocalDate.now()
+            val todayIdx = generatedDates.indexOfFirst { it.first == today }
+            val targetIdx = if (todayIdx >= 0) todayIdx else {
+                // Closest date to today
+                generatedDates.indexOfFirst { !it.first.isBefore(today) }.takeIf { it >= 0 } ?: 0
             }
+            hScroll.scrollTo((targetIdx * cellWidthPx).toInt())
+            hasScrolledToToday = true
         }
     }
 
+    // Dynamic bidirectional loading as user approaches edges
+    LaunchedEffect(hScroll.value, hScroll.maxValue) {
+        // Approaching right edge (future dates)
+        if (hScroll.maxValue > 0 && hScroll.value > hScroll.maxValue - (cellWidthPx * 4)) {
+            futureDaysCount += 20
+        }
+        // Approaching left edge (past dates)
+        if (hScroll.value < (cellWidthPx * 3) && pastDaysCount < 180) {
+            val prevPastDays = pastDaysCount
+            pastDaysCount += 20
+            // Scroll offset adjustment is handled naturally by position
+        }
+    }
+
+    // Date Picker Dialog
     var showDatePicker by remember { mutableStateOf(false) }
     if (showDatePicker) {
         val datePickerState = rememberDatePickerState()
@@ -121,9 +173,14 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                         val idx = generatedDates.indexOfFirst { it.first == selectedDate }
                         if (idx >= 0) {
                             coroutineScope.launch { hScroll.animateScrollTo((idx * cellWidthPx).toInt()) }
+                        } else {
+                            // Expand range to include chosen date
+                            val diff = java.time.temporal.ChronoUnit.DAYS.between(LocalDate.now(), selectedDate)
+                            if (diff < 0) pastDaysCount = (-diff + 15).toInt()
+                            else futureDaysCount = (diff + 15).toInt()
                         }
                     }
-                }) { Text("Jump") }
+                }) { Text("Jump to Date", fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
                 TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
@@ -133,33 +190,93 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
         }
     }
 
-    // Edit Cell State: stores (studentId, dateString, slotId)
-    var selectedCell by remember { mutableStateOf<Triple<String, String, String>?>(null) }
+    // Cell Detail & Correction BottomSheet State
+    var activeCellDetail by remember { mutableStateOf<CellDetailData?>(null) }
 
     MaterialTheme(
         colorScheme = lightColorScheme(
             primary = Color(0xFF6750A4),
             background = Color.White,
-            surface = Color.White
+            surface = Color.White,
+            surfaceVariant = Color(0xFFF1F5F9)
         )
     ) {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("Attendance Report", fontWeight = FontWeight.Bold, color = Color.Black) },
+                    title = {
+                        Column {
+                            Text(
+                                text = course?.name?.takeIf { it.isNotBlank() } ?: "Attendance Register",
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF0F172A),
+                                fontSize = 17.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            val subTitle = course?.code?.takeIf { it.isNotBlank() } ?: "Official Attendance Sheet"
+                            Text(
+                                text = subTitle,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF64748B)
+                            )
+                        }
+                    },
                     navigationIcon = {
                         IconButton(onClick = { navController.popBackStack() }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.Black)
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color(0xFF0F172A))
+                        }
+                    },
+                    actions = {
+                        // Jump to Today Shortcut Button
+                        FilledTonalButton(
+                            onClick = {
+                                val today = LocalDate.now()
+                                val todayIdx = generatedDates.indexOfFirst { it.first == today }
+                                if (todayIdx >= 0) {
+                                    coroutineScope.launch {
+                                        hScroll.animateScrollTo((todayIdx * cellWidthPx).toInt())
+                                    }
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = Color(0xFFEDE9FE),
+                                contentColor = Color(0xFF6D28D9)
+                            )
+                        ) {
+                            Icon(Icons.Default.Today, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Today", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        // Search Toggle
+                        IconButton(onClick = { showSearchBar = !showSearchBar }) {
+                            Icon(
+                                if (showSearchBar) Icons.Default.Close else Icons.Default.Search,
+                                contentDescription = "Search",
+                                tint = Color(0xFF0F172A)
+                            )
+                        }
+
+                        // Calendar Jump
+                        IconButton(onClick = { showDatePicker = true }) {
+                            Icon(Icons.Default.CalendarMonth, contentDescription = "Pick Date", tint = Color(0xFF0F172A))
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
                 )
             },
-            containerColor = Color.White
+            containerColor = Color(0xFFF8F9FA)
         ) { paddingValues ->
-            if (students.isEmpty() || generatedDates.isEmpty()) {
+            if (students.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Color(0xFF6750A4))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = Color(0xFF6750A4))
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("Loading class register...", color = Color.Gray)
+                    }
                 }
                 return@Scaffold
             }
@@ -168,108 +285,76 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues)
-                    .background(Color(0xFFFAFAFA))
+                    .background(Color(0xFFF8F9FA))
             ) {
-                // Toolbar Area
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        placeholder = { Text("Search student...", style = MaterialTheme.typography.bodyMedium) },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search", modifier = Modifier.size(20.dp)) },
-                        modifier = Modifier.weight(1f).height(50.dp),
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            unfocusedContainerColor = Color.White,
-                            unfocusedBorderColor = Color(0xFFE0E0E0),
-                            focusedContainerColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(25.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    FilledTonalIconButton(
-                        onClick = { showDatePicker = true },
-                        modifier = Modifier.size(50.dp),
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                // Optional Search Bar
+                AnimatedVisibility(visible = showSearchBar) {
+                    Surface(
+                        color = Color.White,
+                        modifier = Modifier.fillMaxWidth(),
+                        shadowElevation = 2.dp
                     ) {
-                        Icon(Icons.Default.CalendarToday, contentDescription = "Jump to Date", tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text("Filter student by name or roll number...", fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                            trailingIcon = {
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = { searchQuery = "" }) {
+                                        Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                                .height(48.dp),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                unfocusedBorderColor = Color(0xFFCBD5E1),
+                                focusedBorderColor = Color(0xFF6750A4)
+                            )
+                        )
                     }
                 }
 
-                Divider(color = borderColor, thickness = 1.dp)
-
-                if (searchQuery.isNotBlank()) {
-                    // Search View Mode: Dense list of matched students with horizontal scrollable badges
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                // Legend & Attendance Summary Strip
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(filteredStudents) { student ->
-                            val studentRecords = attendance.filter { it.studentId == student.id }.sortedByDescending { it.date }
-                            
-                            ElevatedCard(
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
-                                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(12.dp).fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                                        Text(student.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text(student.rollNumber, color = Color.Gray, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    }
-                                    
-                                    if (studentRecords.isEmpty()) {
-                                        Text("No records", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                                    } else {
-                                        LazyRow(
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.weight(1.5f, fill = true)
-                                        ) {
-                                            items(studentRecords) { record ->
-                                                val status = record.status
-                                                val badgeColor = when (status) { "P" -> Color(0xFF4CAF50); "A" -> Color(0xFFF44336); "L" -> Color(0xFFFF9800); else -> Color.Gray }
-                                                val recordDate = LocalDate.parse(record.date, DateTimeFormatter.ISO_LOCAL_DATE)
-                                                
-                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                    val formattedDate = recordDate.format(DateTimeFormatter.ofPattern(
-                                                        if (recordDate.year == LocalDate.now().year) "dd MMM" else "dd MMM ''yy"
-                                                    ))
-                                                    Text(
-                                                        text = formattedDate,
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Medium,
-                                                        color = Color.Gray,
-                                                        modifier = Modifier.padding(bottom = 4.dp)
-                                                    )
-                                                    Surface(shape = CircleShape, color = badgeColor.copy(alpha = 0.15f), modifier = Modifier.size(32.dp)) {
-                                                        Box(contentAlignment = Alignment.Center) {
-                                                            Text(status, color = badgeColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        LegendBadge("P", "Present", Color(0xFF16A34A), Color(0xFFDCFCE7))
+                        LegendBadge("A", "Absent", Color(0xFFDC2626), Color(0xFFFEE2E2))
+                        LegendBadge("L", "Late", Color(0xFFD97706), Color(0xFFFEF3C7))
                     }
-                } else {
-                    // Excel-style Grid Area
-                    Box(modifier = Modifier.fillMaxSize()) {
-                    
-                    // 1. Bottom-Right (Main Scrollable Grid)
+
+                    Text(
+                        "${filteredStudents.size} Students",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFF64748B),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Divider(color = gridBorderColor, thickness = 1.dp)
+
+                // EXCEL-LIKE FROZEN PANES SHEET
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.White)
+                ) {
+                    // 1. DATA GRID (Main Bottom-Right Grid: Scrolls horizontally and vertically)
                     Box(
                         modifier = Modifier
                             .padding(start = leftColWidth, top = headerHeight)
@@ -280,83 +365,67 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                         Column {
                             filteredStudents.forEachIndexed { rowIndex, student ->
                                 val isZebra = rowIndex % 2 != 0
+                                val studentRowBg = if (isZebra) Color(0xFFF8FAFC) else Color.White
+
                                 Row(modifier = Modifier.height(rowHeight)) {
                                     generatedDates.forEach { (date, slot) ->
+                                        val isToday = date == LocalDate.now()
                                         val dateStr = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
                                         val record = attendance.find { it.studentId == student.id && it.date == dateStr && it.scheduleSlotId == slot.id }
                                         val status = record?.status
-                                        
-                                        val isSelected = selectedCell?.first == student.id && selectedCell?.second == dateStr && selectedCell?.third == slot.id
-                                        
+
+                                        val cellBg = when {
+                                            isToday -> if (isZebra) Color(0xFFF5F3FF) else Color(0xFFFAF5FF)
+                                            else -> studentRowBg
+                                        }
+
                                         Box(
                                             modifier = Modifier
                                                 .size(width = cellWidth, height = rowHeight)
-                                                .background(if (isZebra) Color(0xFFF9FAFB) else Color.White)
-                                                .border(
-                                                    width = if (isSelected) 2.dp else 0.5.dp, 
-                                                    color = if (isSelected) MaterialTheme.colorScheme.primary else borderColor
+                                                .background(cellBg)
+                                                .border(0.5.dp, if (isToday) Color(0xFFC4B5FD) else gridBorderColor)
+                                            .clickable {
+                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                activeCellDetail = CellDetailData(
+                                                    student = student,
+                                                    date = date,
+                                                    dateStr = dateStr,
+                                                    slot = slot,
+                                                    currentStatus = status
                                                 )
-                                                .clickable { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); selectedCell = Triple(student.id, dateStr, slot.id) },
+                                            },
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            // Status Badge
                                             if (status != null) {
-                                                val badgeColor = when (status) { "P" -> Color(0xFF4CAF50); "A" -> Color(0xFFF44336); "L" -> Color(0xFFFF9800); else -> Color.Gray }
-                                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                                                    val formattedDate = date.format(DateTimeFormatter.ofPattern(
-                                                        if (date.year == LocalDate.now().year) "dd MMM" else "dd MMM ''yy"
-                                                    ))
-                                                    Text(
-                                                        text = formattedDate,
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        fontSize = 9.sp,
-                                                        fontWeight = FontWeight.Light,
-                                                        color = Color.Gray,
-                                                        modifier = Modifier.padding(bottom = 2.dp)
-                                                    )
-                                                    Surface(shape = CircleShape, color = badgeColor.copy(alpha = 0.15f), modifier = Modifier.size(28.dp)) {
-                                                        Box(contentAlignment = Alignment.Center) {
-                                                            Text(status, color = badgeColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
-                                                        }
+                                                val (statusColor, statusBg, statusBorder) = when (status) {
+                                                    "P" -> Triple(Color(0xFF15803D), Color(0xFFDCFCE7), Color(0xFF86EFAC))
+                                                    "A" -> Triple(Color(0xFFB91C1C), Color(0xFFFEE2E2), Color(0xFFFCA5A5))
+                                                    "L" -> Triple(Color(0xFFB45309), Color(0xFFFEF3C7), Color(0xFFFDE68A))
+                                                    else -> Triple(Color.Gray, Color(0xFFF1F5F9), Color(0xFFCBD5E1))
+                                                }
+
+                                                Surface(
+                                                    shape = CircleShape,
+                                                    color = statusBg,
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, statusBorder),
+                                                    modifier = Modifier.size(28.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Text(
+                                                            text = status,
+                                                            color = statusColor,
+                                                            fontWeight = FontWeight.Black,
+                                                            fontSize = 12.sp
+                                                        )
                                                     }
                                                 }
-                                            }
-                                            
-                                            // Popover for Quick Edit
-                                            DropdownMenu(
-                                                expanded = isSelected,
-                                                onDismissRequest = { selectedCell = null },
-                                                modifier = Modifier.background(Color.White)
-                                            ) {
+                                            } else {
                                                 Text(
-                                                    "Session: ${slot.startTime} - ${slot.endTime}", 
-                                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    color = Color.Gray
+                                                    text = "—",
+                                                    color = Color(0xFFCBD5E1),
+                                                    fontSize = 14.sp,
+                                                    fontWeight = FontWeight.Bold
                                                 )
-                                                Divider()
-                                                Row(modifier = Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                    Button(onClick = { 
-                                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                                        viewModel.markAttendance(dateStr, slot.id, student.id, "P")
-                                                        selectedCell = null 
-                                                    }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))) { Text("P") }
-                                                    Button(onClick = { 
-                                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                                        viewModel.markAttendance(dateStr, slot.id, student.id, "A")
-                                                        selectedCell = null 
-                                                    }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF44336))) { Text("A") }
-                                                    Button(onClick = { 
-                                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                                        viewModel.markAttendance(dateStr, slot.id, student.id, "L")
-                                                        selectedCell = null 
-                                                    }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800))) { Text("L") }
-                                                    TextButton(onClick = { 
-                                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                                        viewModel.markAttendance(dateStr, slot.id, student.id, "NONE")
-                                                        selectedCell = null 
-                                                    }) { Text("Clear") }
-                                                }
                                             }
                                         }
                                     }
@@ -365,7 +434,7 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                         }
                     }
 
-                    // 2. Top-Right (Sticky Headers - Horizontal Scroll Sync)
+                    // 2. FROZEN STICKY HEADER ROW (Top-Right: Syncs with hScroll)
                     Box(
                         modifier = Modifier
                             .padding(start = leftColWidth)
@@ -374,30 +443,99 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                             .clipToBounds()
                             .background(Color.White)
                     ) {
-                        Row(modifier = Modifier.offset { IntOffset(-hScroll.value, 0) }) {
-                            generatedDates.forEach { (date, _) ->
+                        Row(
+                            modifier = Modifier
+                                .horizontalScroll(hScroll)
+                                .height(headerHeight)
+                        ) {
+                            generatedDates.forEach { (date, slot) ->
                                 val isToday = date == LocalDate.now()
+                                val dayName = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).uppercase()
+                                val dateFormatted = date.format(
+                                    DateTimeFormatter.ofPattern(
+                                        if (date.year == LocalDate.now().year) "dd MMM" else "dd MMM ''yy"
+                                    )
+                                )
+
+                                val headerBg = if (isToday) Color(0xFFF3E8FF) else Color(0xFFF8FAFC)
+                                val headerBorder = if (isToday) Color(0xFF8B5CF6) else gridBorderColor
+
                                 Column(
                                     modifier = Modifier
                                         .size(width = cellWidth, height = headerHeight)
-                                        .background(if (isToday) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else Color.White)
-                                        .border(0.5.dp, borderColor),
+                                        .background(headerBg)
+                                        .border(0.5.dp, headerBorder),
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Center
                                 ) {
+                                    // Top Accent Bar for Today
                                     if (isToday) {
-                                        Box(modifier = Modifier.fillMaxWidth().height(3.dp).background(MaterialTheme.colorScheme.primary))
-                                        Spacer(modifier = Modifier.weight(1f))
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(3.5.dp)
+                                                .background(Color(0xFF6750A4))
+                                        )
+                                        Surface(
+                                            color = Color(0xFF6750A4),
+                                            shape = RoundedCornerShape(3.dp),
+                                            modifier = Modifier.padding(top = 2.dp)
+                                        ) {
+                                            Text(
+                                                "TODAY",
+                                                color = Color.White,
+                                                fontSize = 8.sp,
+                                                fontWeight = FontWeight.Black,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                            )
+                                        }
                                     }
-                                    Text(date.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = if (isToday) MaterialTheme.colorScheme.primary else Color.DarkGray)
-                                    Text(date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).capitalize(), style = MaterialTheme.typography.labelSmall, color = if (isToday) MaterialTheme.colorScheme.primary else Color.Gray, fontSize = 11.sp)
-                                    if (isToday) Spacer(modifier = Modifier.weight(1f))
+
+                                    Spacer(modifier = Modifier.height(2.dp))
+
+                                    // STACKED DAY & DATE HEADERS (Clear and Unmistakable)
+                                    Text(
+                                        text = dayName,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            letterSpacing = 0.5.sp
+                                        ),
+                                        color = if (isToday) Color(0xFF6D28D9) else Color(0xFF0F172A)
+                                    )
+
+                                    Text(
+                                        text = dateFormatted,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        ),
+                                        color = if (isToday) Color(0xFF6D28D9) else Color(0xFF64748B)
+                                    )
+
+                                    if (slot.startTime.isNotBlank() && slot.startTime != "Session") {
+                                        Text(
+                                            text = slot.startTime,
+                                            fontSize = 8.sp,
+                                            color = Color(0xFF94A3B8),
+                                            maxLines = 1
+                                        )
+                                    }
                                 }
                             }
                         }
+
+                        // Subtle bottom drop shadow on header row for Excel frozen pane effect
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(3.dp)
+                                .align(Alignment.BottomStart)
+                                .background(Color(0x0F000000))
+                        )
                     }
 
-                    // 3. Bottom-Left (Sticky First Column - Vertical Scroll Sync)
+                    // 3. FROZEN STICKY STUDENT COLUMN (Bottom-Left: Syncs with vScroll)
                     Box(
                         modifier = Modifier
                             .padding(top = headerHeight)
@@ -405,68 +543,338 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                             .fillMaxHeight()
                             .clipToBounds()
                             .background(Color.White)
-                            .shadow(2.dp, spotColor = Color.Transparent) // Adds slight depth
                     ) {
-                        Column(modifier = Modifier.offset { IntOffset(0, -vScroll.value) }) {
+                        Column(
+                            modifier = Modifier
+                                .verticalScroll(vScroll)
+                                .width(leftColWidth)
+                        ) {
                             filteredStudents.forEachIndexed { rowIndex, student ->
                                 val isZebra = rowIndex % 2 != 0
-                                
-                                // Calculate individual %
+                                val studentRowBg = if (isZebra) Color(0xFFF8FAFC) else Color.White
+
+                                // Calculate Att % based purely on saved database records
                                 val studentRecords = attendance.filter { it.studentId == student.id }
-                                val presents = studentRecords.count { it.status == "P" || it.status == "L" }
-                                val total = studentRecords.size.takeIf { it > 0 } ?: 1
-                                val percentage = (presents.toFloat() / total * 100).toInt()
-                                val pctColor = when {
-                                    percentage >= 75 -> Color(0xFF2E7D32) // Dark Green
-                                    percentage >= 50 -> Color(0xFFF57C00) // Amber/Orange
-                                    else -> Color(0xFFD32F2F) // Red
+                                val presentCount = studentRecords.count { it.status == "P" || it.status == "L" }
+                                val totalRecorded = studentRecords.size
+                                val percentage = if (totalRecorded > 0) {
+                                    ((presentCount.toFloat() / totalRecorded) * 100).toInt()
+                                } else 0
+
+                                val (pctTextColor, pctBgColor) = when {
+                                    totalRecorded == 0 -> Color(0xFF64748B) to Color(0xFFF1F5F9)
+                                    percentage >= 75 -> Color(0xFF15803D) to Color(0xFFDCFCE7)
+                                    percentage >= 50 -> Color(0xFFB45309) to Color(0xFFFEF3C7)
+                                    else -> Color(0xFFB91C1C) to Color(0xFFFEE2E2)
                                 }
-                                
+
                                 Row(
                                     modifier = Modifier
                                         .size(width = leftColWidth, height = rowHeight)
-                                        .background(if (isZebra) Color(0xFFF9FAFB) else Color.White)
-                                        .border(0.5.dp, borderColor)
-                                        .padding(horizontal = 8.dp),
+                                        .background(studentRowBg)
+                                        .border(0.5.dp, gridBorderColor)
+                                        .padding(horizontal = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(student.name, fontWeight = FontWeight.SemiBold, color = Color.Black, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text(student.rollNumber, color = Color.Gray, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                    Column(modifier = Modifier.weight(1f).padding(end = 6.dp)) {
+                                        Text(
+                                            text = student.name,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF0F172A),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = student.rollNumber,
+                                            color = Color(0xFF64748B),
+                                            fontSize = 11.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                     }
+
+                                    // Color-coded Att. % Threshold Badge
                                     Surface(
-                                        color = pctColor.copy(alpha = 0.1f),
-                                        shape = RoundedCornerShape(4.dp)
+                                        color = pctBgColor,
+                                        shape = RoundedCornerShape(6.dp)
                                     ) {
                                         Text(
-                                            "$percentage%", 
-                                            fontWeight = FontWeight.Bold, 
-                                            color = pctColor, 
-                                            style = MaterialTheme.typography.labelMedium,
-                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                            text = if (totalRecorded > 0) "$percentage%" else "—",
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = pctTextColor,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                                         )
                                     }
                                 }
                             }
                         }
+
+                        // Subtle right drop shadow for frozen student column
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .fillMaxHeight()
+                                .align(Alignment.CenterEnd)
+                                .background(Color(0x0F000000))
+                        )
                     }
 
-                    // 4. Top-Left Corner (Completely Frozen)
+                    // 4. FROZEN TOP-LEFT CORNER (Pinned completely)
                     Box(
                         modifier = Modifier
                             .size(width = leftColWidth, height = headerHeight)
-                            .background(Color.White)
-                            .border(0.5.dp, borderColor),
+                            .background(Color(0xFFF1F5F9))
+                            .border(0.5.dp, gridBorderColor),
                         contentAlignment = Alignment.Center
                     ) {
-                        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Student", fontWeight = FontWeight.Bold, color = Color.DarkGray, style = MaterialTheme.typography.labelMedium)
-                            Text("Att %", fontWeight = FontWeight.Bold, color = Color.DarkGray, style = MaterialTheme.typography.labelMedium)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.People, contentDescription = null, tint = Color(0xFF475569), modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    "STUDENT",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF334155),
+                                    fontSize = 11.sp,
+                                    letterSpacing = 0.5.sp
+                                )
+                            }
+                            Text(
+                                "ATT %",
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF334155),
+                                fontSize = 11.sp,
+                                letterSpacing = 0.5.sp
+                            )
                         }
+
+                        // Bottom and Right divider accents
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(2.dp)
+                                .align(Alignment.BottomStart)
+                                .background(gridBorderColor)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .width(2.dp)
+                                .fillMaxHeight()
+                                .align(Alignment.CenterEnd)
+                                .background(gridBorderColor)
+                        )
                     }
-                } // End Box (Excel Grid)
-                } // End if/else
+                }
             }
         }
+    }
+
+    // Cell Detail & Correction Popover / Bottom Sheet
+    activeCellDetail?.let { detail ->
+        ModalBottomSheet(
+            onDismissRequest = { activeCellDetail = null },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = Color.White,
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 36.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFEDE9FE)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val initials = detail.student.name.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("")
+                        Text(
+                            text = if (initials.isNotBlank()) initials else "S",
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF6D28D9),
+                            fontSize = 18.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = detail.student.name,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color(0xFF0F172A)
+                        )
+                        Text(
+                            text = "Roll No: ${detail.student.rollNumber}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF64748B)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                Divider(color = Color(0xFFE2E8F0))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Session Timing Details
+                val formattedFullDate = detail.date.format(DateTimeFormatter.ofPattern("EEEE, dd MMMM yyyy"))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column {
+                        Text("Session Date", style = MaterialTheme.typography.labelSmall, color = Color(0xFF64748B))
+                        Text(formattedFullDate, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A), fontSize = 14.sp)
+                    }
+                    if (detail.slot.startTime.isNotBlank()) {
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("Schedule Time", style = MaterialTheme.typography.labelSmall, color = Color(0xFF64748B))
+                            val slotTime = if (detail.slot.endTime.isNotBlank()) "${detail.slot.startTime} - ${detail.slot.endTime}" else detail.slot.startTime
+                            Text(slotTime, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A), fontSize = 14.sp)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Current Saved Status
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Saved Status:", fontWeight = FontWeight.Medium, color = Color(0xFF475569))
+                    val statusText = when (detail.currentStatus) {
+                        "P" -> "Present"
+                        "A" -> "Absent"
+                        "L" -> "Late"
+                        else -> "Not Marked"
+                    }
+                    val statusColor = when (detail.currentStatus) {
+                        "P" -> Color(0xFF16A34A)
+                        "A" -> Color(0xFFDC2626)
+                        "L" -> Color(0xFFD97706)
+                        else -> Color(0xFF64748B)
+                    }
+                    Surface(
+                        color = statusColor.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = statusText,
+                            color = statusColor,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+                Text("Correct / Change Attendance Status:", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF1E293B))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Correction Actions Grid
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            viewModel.markAttendance(detail.dateStr, detail.slot.id, detail.student.id, "P")
+                            activeCellDetail = null
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Present")
+                    }
+
+                    Button(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            viewModel.markAttendance(detail.dateStr, detail.slot.id, detail.student.id, "A")
+                            activeCellDetail = null
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Absent")
+                    }
+
+                    Button(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            viewModel.markAttendance(detail.dateStr, detail.slot.id, detail.student.id, "L")
+                            activeCellDetail = null
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.AccessTime, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Late")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedButton(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.markAttendance(detail.dateStr, detail.slot.id, detail.student.id, "NONE")
+                        activeCellDetail = null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF64748B))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Clear Recorded Attendance", color = Color(0xFF64748B))
+                }
+            }
+        }
+    }
+}
+
+data class CellDetailData(
+    val student: StudentEntity,
+    val date: LocalDate,
+    val dateStr: String,
+    val slot: ScheduleSlotEntity,
+    val currentStatus: String?
+)
+
+@Composable
+fun LegendBadge(status: String, label: String, color: Color, bgColor: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Surface(
+            shape = CircleShape,
+            color = bgColor,
+            border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.4f)),
+            modifier = Modifier.size(18.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(status, color = color, fontWeight = FontWeight.Bold, fontSize = 9.sp)
+            }
+        }
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(label, fontSize = 11.sp, color = Color(0xFF475569), fontWeight = FontWeight.Medium)
     }
 }

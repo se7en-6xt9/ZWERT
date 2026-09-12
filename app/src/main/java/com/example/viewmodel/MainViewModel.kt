@@ -19,6 +19,13 @@ import com.example.models.ScheduleSlotUpload
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreSettings
+import com.google.firebase.firestore.PersistentCacheSettings
+import com.google.firebase.firestore.Source
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import com.squareup.moshi.Moshi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -38,10 +45,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     private val firestore: FirebaseFirestore? by lazy {
         try {
-            FirebaseFirestore.getInstance()
+            val db = FirebaseFirestore.getInstance()
+            try {
+                val settings = FirebaseFirestoreSettings.Builder()
+                    .setLocalCacheSettings(
+                        PersistentCacheSettings.newBuilder()
+                            .setSizeBytes(FirebaseFirestoreSettings.CACHE_SIZE_UNLIMITED)
+                            .build()
+                    )
+                    .build()
+                db.firestoreSettings = settings
+            } catch (_: Throwable) {
+                // Settings might have already been set in MyApplication
+            }
+            db
         } catch (e: Throwable) {
             Log.e("MainViewModel", "FirebaseFirestore.getInstance() failed", e)
             null
+        }
+    }
+
+    private val connectivityManager = application.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+
+    private val _isNetworkConnected = MutableStateFlow(checkNetworkStatus())
+    val isNetworkConnected: StateFlow<Boolean> = _isNetworkConnected.asStateFlow()
+
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
+    private fun checkNetworkStatus(): Boolean {
+        return try {
+            val cm = connectivityManager ?: return false
+            val activeNetwork = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(activeNetwork) ?: return false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            _isNetworkConnected.value = true
+            Log.d("NetworkStatus", "Internet reconnected. Triggering auto-sync for offline cached changes...")
+            syncDataFromFirebase()
+        }
+
+        override fun onLost(network: Network) {
+            _isNetworkConnected.value = false
+            Log.d("NetworkStatus", "Internet disconnected. Using Firestore offline persistence.")
         }
     }
 
@@ -76,6 +128,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private var profileListener: com.google.firebase.firestore.ListenerRegistration? = null
+    private var batchesListener: com.google.firebase.firestore.ListenerRegistration? = null
+    private var snapshotsInSyncListener: com.google.firebase.firestore.ListenerRegistration? = null
 
     init {
         try {
@@ -87,6 +141,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     prefs.getString("profile_subject", "Computer Science & Engineering") ?: "Computer Science & Engineering",
                     prefs.getString("profile_institute", "Department of CSE") ?: "Department of CSE"
                 )
+            }
+
+            try {
+                val request = NetworkRequest.Builder()
+                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .build()
+                connectivityManager?.registerNetworkCallback(request, networkCallback)
+            } catch (e: Exception) {
+                Log.w("MainViewModel", "Failed to register network callback", e)
             }
 
             val currentAuth = auth
@@ -114,6 +177,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    override fun onCleared() {
+        super.onCleared()
+        try {
+            connectivityManager?.unregisterNetworkCallback(networkCallback)
+        } catch (_: Exception) {}
+        clearFirestoreListeners()
+    }
+
     private fun setupFirestoreListeners() {
         val uid = auth?.currentUser?.uid ?: return
         val db = firestore ?: return
@@ -132,6 +203,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _userProfile.value = null
                 }
             }
+
+        batchesListener?.remove()
+        batchesListener = db.collection("users").document(uid).collection("batches")
+            .addSnapshotListener { snapshot, e ->
+                if (e != null) {
+                    Log.e("FirebaseSync", "Batches snapshot listener error", e)
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    val isFromCache = snapshot.metadata.isFromCache
+                    val hasPendingWrites = snapshot.metadata.hasPendingWrites()
+                    Log.d("FirebaseSync", "Batches snapshot triggered (fromCache=$isFromCache, pendingWrites=$hasPendingWrites, size=${snapshot.size()})")
+                    syncDataFromFirebase()
+                }
+            }
+            
+        snapshotsInSyncListener?.remove()
+        snapshotsInSyncListener = db.addSnapshotsInSyncListener {
+            Log.d("FirebaseSync", "All Firestore local writes in sync with cloud.")
+            _isSyncing.value = false
+        }
             
         syncDataFromFirebase()
     }
@@ -139,6 +231,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun clearFirestoreListeners() {
         profileListener?.remove()
         profileListener = null
+        batchesListener?.remove()
+        batchesListener = null
+        snapshotsInSyncListener?.remove()
+        snapshotsInSyncListener = null
         _userProfile.value = null
     }
 
@@ -152,43 +248,135 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private suspend fun getCollectionSafely(collectionRef: com.google.firebase.firestore.CollectionReference): List<com.google.firebase.firestore.DocumentSnapshot> {
+        return try {
+            if (!_isNetworkConnected.value) {
+                return try {
+                    collectionRef.get(Source.CACHE).await().documents
+                } catch (cacheErr: Exception) {
+                    Log.d("FirebaseSync", "Cache miss while offline for ${collectionRef.path}: ${cacheErr.message}")
+                    emptyList()
+                }
+            }
+            try {
+                kotlinx.coroutines.withTimeout(3000L) {
+                    collectionRef.get(Source.DEFAULT).await().documents
+                }
+            } catch (e: Exception) {
+                Log.d("FirebaseSync", "Server read timed out or failed for ${collectionRef.path}, falling back to persistent cache: ${e.message}")
+                try {
+                    collectionRef.get(Source.CACHE).await().documents
+                } catch (_: Exception) {
+                    emptyList()
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("FirebaseSync", "Failed to read collection from ${collectionRef.path}: ${e.message}")
+            emptyList()
+        }
+    }
+
     fun syncDataFromFirebase(onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             val uid = auth?.currentUser?.uid
-            if (uid != null && firestore != null) {
+            val currentFirestore = firestore
+            if (uid != null && currentFirestore != null) {
                 try {
-                    val batchesRef = firestore!!.collection("users").document(uid).collection("batches")
-                    val snapshot = batchesRef.get().await()
+                    _isSyncing.value = true
+                    val batchesRef = currentFirestore.collection("users").document(uid).collection("batches")
+                    val documents = getCollectionSafely(batchesRef)
                     
                     val batches = mutableListOf<com.example.data.BatchImport>()
-                    for (doc in snapshot.documents) {
-                        var batch = doc.toObject(com.example.data.BatchImport::class.java)?.copy(batchId = doc.id)
-                        if (batch != null) {
-                            // Fetch students subcollection
-                            val studentsSnapshot = doc.reference.collection("students").get().await()
-                            val students = studentsSnapshot.documents.mapNotNull { it.toObject(com.example.data.StudentImport::class.java) }
-                            batch = batch.copy(students = students)
-                            batches.add(batch)
-                            
-                            // Sync attendance for this batch
-                            val attendanceSnapshot = doc.reference.collection("attendance").get().await()
-                            val attendanceRecords = attendanceSnapshot.documents.mapNotNull { it.toObject(AttendanceRecordEntity::class.java) }
-                            attendanceRecords.forEach { record ->
-                                repository.saveAttendance(record)
+                    val allAttendanceRecords = mutableListOf<AttendanceRecordEntity>()
+
+                    for (doc in documents) {
+                        val batchId = doc.getString("batchId") ?: doc.id
+                        val year = doc.getString("year") ?: ""
+                        val semester = doc.getString("semester") ?: ""
+                        val section = doc.getString("section") ?: ""
+                        val location = doc.getString("location") ?: ""
+                        
+                        val courseObj = doc.get("course")
+                        val course = if (courseObj is Map<*, *>) {
+                            com.example.data.CourseImport(
+                                code = courseObj["code"] as? String ?: "",
+                                name = courseObj["name"] as? String ?: ""
+                            )
+                        } else {
+                            doc.toObject(com.example.data.BatchImport::class.java)?.course 
+                                ?: com.example.data.CourseImport(code = doc.getString("courseCode") ?: "", name = doc.getString("courseName") ?: "")
+                        }
+
+                        val scheduleList = doc.get("weeklySchedule") as? List<*>
+                        val weeklySchedule = scheduleList?.mapNotNull { item ->
+                            if (item is Map<*, *>) {
+                                com.example.data.ScheduleImport(
+                                    day = item["day"] as? String ?: "",
+                                    time = item["time"] as? String ?: "",
+                                    location = item["location"] as? String
+                                )
+                            } else null
+                        } ?: doc.toObject(com.example.data.BatchImport::class.java)?.weeklySchedule ?: emptyList()
+
+                        // Fetch students subcollection safely from persistent cache or server
+                        val studentsDocs = getCollectionSafely(doc.reference.collection("students"))
+                        val students = studentsDocs.map { sDoc ->
+                            com.example.data.StudentImport(
+                                id = sDoc.getString("id") ?: sDoc.id,
+                                name = sDoc.getString("name") ?: "Unknown",
+                                rollNumber = sDoc.getString("rollNumber") ?: ""
+                            )
+                        }
+
+                        val parsedBatch = com.example.data.BatchImport(
+                            batchId = batchId,
+                            year = year,
+                            semester = semester,
+                            course = course,
+                            section = section,
+                            location = location,
+                            weeklySchedule = weeklySchedule,
+                            students = students
+                        )
+                        batches.add(parsedBatch)
+
+                        // Fetch attendance subcollection safely from persistent cache or server
+                        val attendanceDocs = getCollectionSafely(doc.reference.collection("attendance"))
+                        for (aDoc in attendanceDocs) {
+                            val date = aDoc.getString("date") ?: ""
+                            val slotId = aDoc.getString("scheduleSlotId") ?: ""
+                            val studentId = aDoc.getString("studentId") ?: ""
+                            val status = aDoc.getString("status") ?: ""
+                            if (date.isNotBlank() && slotId.isNotBlank() && studentId.isNotBlank()) {
+                                allAttendanceRecords.add(
+                                    AttendanceRecordEntity(
+                                        date = date,
+                                        scheduleSlotId = slotId,
+                                        studentId = studentId,
+                                        status = status
+                                    )
+                                )
                             }
                         }
                     }
                     
                     if (batches.isNotEmpty()) {
-                        repository.wipeAllData() // Wipe old local data before sync
+                        repository.wipeAllData() // Wipe old local data before replacing with cloud state
                         val importData = com.example.data.ImportTimetableData(teacher = null, batches = batches)
                         repository.processTimetableImport(importData)
-                        Log.d("FirebaseSync", "Synced ${batches.size} batches from Firestore")
+                        
+                        // Restore attendance records after schema is in place
+                        allAttendanceRecords.forEach { record ->
+                            repository.saveAttendance(record)
+                        }
+                        Log.d("FirebaseSync", "Synced ${batches.size} batches and ${allAttendanceRecords.size} attendance records (cloud/cache)")
                     } else {
-                        Log.d("FirebaseSync", "No batches found on Firestore for this user")
+                        Log.d("FirebaseSync", "No batches found on Firestore for user $uid")
                     }
                 } catch (e: Exception) {
-                    Log.e("FirebaseSync", "Sync failed: ${e.message}")
+                    Log.e("FirebaseSync", "Sync failed: ${e.message}", e)
+                } finally {
+                    _isSyncing.value = false
                 }
             }
             onComplete()
@@ -279,7 +467,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "subject" to subject,
                         "institute" to institute
                     )
-                    firestore!!.collection("users").document(uid).collection("profile").document("info").set(profileData).await()
+                    val task = firestore!!.collection("users").document(uid).collection("profile").document("info").set(profileData)
+                    try {
+                        kotlinx.coroutines.withTimeout(1500L) { task.await() }
+                    } catch (e: Exception) {
+                        Log.d("Profile", "Profile queued in offline persistent cache: ${e.message}")
+                    }
                 } else {
                     Log.d("Profile", "Auth not available, saved profile locally in preferences.")
                 }
@@ -477,21 +670,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val updatedBatch = batch.copy(batchId = docId)
                         val batchRef = batchesRef.document(docId)
                         
+                        val scheduleList = updatedBatch.weeklySchedule?.map { s ->
+                            hashMapOf(
+                                "day" to (s.day ?: ""),
+                                "time" to (s.time ?: ""),
+                                "location" to (s.location ?: "")
+                            )
+                        } ?: emptyList<Any>()
+
                         val batchMeta = hashMapOf(
                             "batchId" to docId,
-                            "year" to updatedBatch.year,
-                            "semester" to updatedBatch.semester,
-                            "course" to updatedBatch.course,
-                            "section" to updatedBatch.section,
-                            "location" to updatedBatch.location,
-                            "weeklySchedule" to updatedBatch.weeklySchedule
+                            "year" to (updatedBatch.year ?: ""),
+                            "semester" to (updatedBatch.semester ?: ""),
+                            "course" to hashMapOf(
+                                "code" to (updatedBatch.course?.code ?: ""),
+                                "name" to (updatedBatch.course?.name ?: "")
+                            ),
+                            "section" to (updatedBatch.section ?: ""),
+                            "location" to (updatedBatch.location ?: ""),
+                            "weeklySchedule" to scheduleList
                         )
-                        batchRef.set(batchMeta).await()
+                        val batchTask = batchRef.set(batchMeta)
+                        try {
+                            kotlinx.coroutines.withTimeout(1500L) { batchTask.await() }
+                        } catch (e: Exception) {
+                            Log.d("FirebaseSync", "Batch $docId saved in offline persistent cache: ${e.message}")
+                        }
                         
                         val studentsRef = batchRef.collection("students")
                         updatedBatch.students?.forEach { student ->
-                            val studentId = student.id ?: java.util.UUID.randomUUID().toString()
-                            studentsRef.document(studentId).set(student.copy(id = studentId)).await()
+                            val studentId = student.id?.takeIf { it.isNotBlank() } ?: java.util.UUID.randomUUID().toString()
+                            val studentTask = studentsRef.document(studentId).set(hashMapOf(
+                                "id" to studentId,
+                                "name" to (student.name ?: ""),
+                                "rollNumber" to (student.rollNumber ?: "")
+                            ))
+                            try {
+                                kotlinx.coroutines.withTimeout(500L) { studentTask.await() }
+                            } catch (_: Exception) {}
                         }
                         android.util.Log.d("TimetableImport", "Saved batch $docId to Firestore.")
                     }
@@ -515,8 +731,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val uid = currentAuth?.currentUser?.uid
 
                 if (currentFirestore != null && uid != null) {
-                    currentFirestore.collection("users").document(uid)
-                        .collection("batches").document(courseId).delete().await()
+                    val deleteTask = currentFirestore.collection("users").document(uid)
+                        .collection("batches").document(courseId).delete()
+                    try {
+                        kotlinx.coroutines.withTimeout(1500L) { deleteTask.await() }
+                    } catch (e: Exception) {
+                        Log.d("FirebaseSync", "Delete queued in offline persistent cache: ${e.message}")
+                    }
                 }
 
                 repository.dao.deleteCourseById(courseId)
@@ -573,21 +794,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (currentFirestore != null && uid != null) {
                     val batchRef = currentFirestore.collection("users").document(uid).collection("batches").document(docId)
+                    val scheduleList = updatedBatch.weeklySchedule?.map { s ->
+                        hashMapOf(
+                            "day" to (s.day ?: ""),
+                            "time" to (s.time ?: ""),
+                            "location" to (s.location ?: "")
+                        )
+                    } ?: emptyList<Any>()
+
                     val batchMeta = hashMapOf(
                         "batchId" to docId,
-                        "year" to updatedBatch.year,
-                        "semester" to updatedBatch.semester,
-                        "course" to updatedBatch.course,
-                        "section" to updatedBatch.section,
-                        "location" to updatedBatch.location,
-                        "weeklySchedule" to updatedBatch.weeklySchedule
+                        "year" to (updatedBatch.year ?: ""),
+                        "semester" to (updatedBatch.semester ?: ""),
+                        "course" to hashMapOf(
+                            "code" to (updatedBatch.course?.code ?: ""),
+                            "name" to (updatedBatch.course?.name ?: "")
+                        ),
+                        "section" to (updatedBatch.section ?: ""),
+                        "location" to (updatedBatch.location ?: ""),
+                        "weeklySchedule" to scheduleList
                     )
-                    batchRef.set(batchMeta).await()
+                    val setTask = batchRef.set(batchMeta)
+                    try {
+                        kotlinx.coroutines.withTimeout(1500L) { setTask.await() }
+                    } catch (e: Exception) {
+                        Log.d("FirebaseSync", "Batch $docId saved in offline persistent cache: ${e.message}")
+                    }
                     
                     val studentsRef = batchRef.collection("students")
                     updatedBatch.students?.forEach { student ->
-                        val studentId = student.id ?: java.util.UUID.randomUUID().toString()
-                        studentsRef.document(studentId).set(student.copy(id = studentId)).await()
+                        val studentId = student.id?.takeIf { it.isNotBlank() } ?: java.util.UUID.randomUUID().toString()
+                        val studentTask = studentsRef.document(studentId).set(hashMapOf(
+                            "id" to studentId,
+                            "name" to (student.name ?: ""),
+                            "rollNumber" to (student.rollNumber ?: "")
+                        ))
+                        try {
+                            kotlinx.coroutines.withTimeout(500L) { studentTask.await() }
+                        } catch (_: Exception) {}
                     }
                 }
 
@@ -643,7 +887,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     status = status
                 )
                 repository.saveAttendance(record)
-                attendanceRef.document("${date}_${slotId}_$studentId").set(record)
+                attendanceRef.document("${date}_${slotId}_$studentId").set(hashMapOf(
+                    "date" to date,
+                    "scheduleSlotId" to slotId,
+                    "studentId" to studentId,
+                    "status" to status
+                ))
             }
         }
     }
@@ -673,9 +922,80 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     status = status
                 )
                 repository.saveAttendance(record)
-                batch.set(attendanceRef.document("${date}_${slotId}_$studentId"), record)
+                batch.set(attendanceRef.document("${date}_${slotId}_$studentId"), hashMapOf(
+                    "date" to date,
+                    "scheduleSlotId" to slotId,
+                    "studentId" to studentId,
+                    "status" to status
+                ))
             }
             batch.commit()
+        }
+    }
+
+    fun submitSessionAttendance(
+        date: String,
+        slotId: String,
+        courseId: String,
+        attendanceMap: Map<String, String>,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                // 1. Save all marked records to Room DB
+                attendanceMap.forEach { (studentId, status) ->
+                    if (status == "NONE") {
+                        repository.deleteAttendance(date, slotId, studentId)
+                    } else {
+                        repository.deleteAttendance(date, slotId, studentId)
+                        val record = AttendanceRecordEntity(
+                            date = date,
+                            scheduleSlotId = slotId,
+                            studentId = studentId,
+                            status = status
+                        )
+                        repository.saveAttendance(record)
+                    }
+                }
+
+                // 2. Batch write to Firebase Firestore
+                val uid = auth?.currentUser?.uid
+                val db = firestore
+                if (uid != null && db != null) {
+                    val batch = db.batch()
+                    val attendanceRef = db.collection("users").document(uid)
+                        .collection("batches").document(courseId)
+                        .collection("attendance")
+
+                    attendanceMap.forEach { (studentId, status) ->
+                        val docRef = attendanceRef.document("${date}_${slotId}_$studentId")
+                        if (status == "NONE") {
+                            batch.delete(docRef)
+                        } else {
+                            batch.set(docRef, hashMapOf(
+                                "date" to date,
+                                "scheduleSlotId" to slotId,
+                                "studentId" to studentId,
+                                "status" to status
+                            ))
+                        }
+                    }
+
+                    try {
+                        kotlinx.coroutines.withTimeout(3000L) {
+                            batch.commit().await()
+                        }
+                    } catch (e: Exception) {
+                        Log.d("AttendanceSubmit", "Firebase write queued in persistent cache or timed out: ${e.message}")
+                    }
+                }
+
+                onSuccess()
+            } catch (e: Exception) {
+                Log.e("AttendanceSubmit", "Failed to submit attendance session: ${e.message}", e)
+                onError(e.message ?: "Failed to save attendance")
+            }
         }
     }
 
