@@ -212,27 +212,53 @@ fun AddEditBatchScreen(
     var scheduleInputMode by remember { mutableStateOf("Blocks") } // "Blocks" or "Grid"
     
     // Grid State
-    val gridDays = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    val gridDays = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
     val gridHours = (0..23).map { hour ->
         val amPmStart = if (hour < 12) "AM" else "PM"
         val startHour = if (hour % 12 == 0) 12 else hour % 12
         val amPmEnd = if ((hour + 1) < 12 || (hour + 1) == 24) "AM" else "PM"
         val endHour = if ((hour + 1) % 12 == 0) 12 else (hour + 1) % 12
-        String.format("%02d:00 %s - %02d:00 %s", startHour, amPmStart, endHour, amPmEnd)
+        val displayStart = if (startHour == 0) 12 else startHour
+        val displayEnd = if (endHour == 0) 12 else endHour
+        String.format("%02d:00 %s - %02d:00 %s", displayStart, amPmStart, displayEnd, amPmEnd)
     }
     var isGridFullScreenOpen by remember { mutableStateOf(false) }
-    var allBookedGridCells by remember { mutableStateOf(setOf<Pair<String, String>>()) }
+    var allBookedSlots by remember { mutableStateOf(listOf<ScheduleSlotEntity>()) }
+    
+    fun parseTimeMin(timeStr: String): Int {
+        try {
+            if (timeStr.contains("AM") || timeStr.contains("PM")) {
+                val parts = timeStr.split(" ")
+                if (parts.isEmpty()) return 0
+                val hm = parts[0].split(":")
+                var h = hm[0].toInt()
+                val m = hm.getOrNull(1)?.toInt() ?: 0
+                if (timeStr.contains("PM") && h < 12) h += 12
+                if (timeStr.contains("AM") && h == 12) h = 0
+                return h * 60 + m
+            } else {
+                val hm = timeStr.split(":")
+                var h = hm[0].toInt()
+                val m = hm.getOrNull(1)?.toInt() ?: 0
+                return h * 60 + m
+            }
+        } catch(e: Exception) { return 0 }
+    }
+
+    val parsedBookedSlots by remember(allBookedSlots) {
+        derivedStateOf {
+            allBookedSlots.map { slot ->
+                val startMin = parseTimeMin(slot.startTime)
+                val endMin = if (slot.endTime.isNotBlank()) parseTimeMin(slot.endTime) else startMin + 60
+                Triple(slot.dayOfWeek, startMin, endMin)
+            }
+        }
+    }
     
     LaunchedEffect(batchId) {
         try {
             val allSlots = viewModel.getAllScheduleSlotsSync()
-            val booked = mutableSetOf<Pair<String, String>>()
-            for (slot in allSlots) {
-                if (batchId != null && slot.courseId == batchId) continue
-                val timeString = if (slot.endTime.isNotBlank()) "${slot.startTime} - ${slot.endTime}" else slot.startTime
-                booked.add(Pair(slot.dayOfWeek, timeString))
-            }
-            allBookedGridCells = booked
+            allBookedSlots = allSlots.filter { batchId == null || it.courseId != batchId }
         } catch(e: Exception) {}
     }
     var selectedGridCells by remember { mutableStateOf(setOf<Pair<String, String>>()) }
@@ -296,7 +322,7 @@ fun AddEditBatchScreen(
                 TopAppBar(
                     title = { Text(if (batchId == null) "Add New Class" else "Edit Class", fontWeight = FontWeight.Bold) },
                     navigationIcon = {
-                        IconButton(onClick = { navController.popBackStack() }, modifier = Modifier.bounceClick(haptic) {}) {
+                        IconButton(onClick = { navController.popBackStack() }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
                     },
@@ -332,7 +358,8 @@ fun AddEditBatchScreen(
                             Column(modifier = Modifier.padding(20.dp)) {
                                 Text("Summary", fontWeight = FontWeight.Bold, color = colorScheme.primary, style = MaterialTheme.typography.titleMedium)
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text("${scheduleBlocks.size + selectedGridCells.size} class slots · ${students.size} students", color = colorScheme.onSurfaceVariant)
+                                val totalSlots = scheduleBlocks.sumOf { it.selectedDays.size } + selectedGridCells.size
+                                Text("$totalSlots class slots · ${students.size} students", color = colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -474,7 +501,7 @@ fun AddEditBatchScreen(
                                         
                                         Button(
                                             onClick = { isGridFullScreenOpen = true },
-                                            modifier = Modifier.fillMaxWidth().height(56.dp).bounceClick(haptic) { isGridFullScreenOpen = true },
+                                            modifier = Modifier.fillMaxWidth().height(56.dp),
                                             shape = RoundedCornerShape(16.dp),
                                             colors = ButtonDefaults.buttonColors(containerColor = accentColor, contentColor = Color.White)
                                         ) {
@@ -501,8 +528,7 @@ fun AddEditBatchScreen(
                                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                                         Text("Time Slot ${index + 1}", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                                                         IconButton(
-                                                            onClick = {},
-                                                            modifier = Modifier.bounceClick(haptic) {
+                                                            onClick = {
                                                                 val newBlocks = scheduleBlocks.toMutableList()
                                                                 newBlocks.removeAt(index)
                                                                 scheduleBlocks = newBlocks
@@ -568,15 +594,14 @@ fun AddEditBatchScreen(
                                         }
                                         
                                         Button(
-                                            onClick = {},
+                                            onClick = {
+                                                val newBlocks = scheduleBlocks.toMutableList()
+                                                newBlocks.add(ScheduleBlockState())
+                                                scheduleBlocks = newBlocks
+                                            },
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .height(56.dp)
-                                                .bounceClick(haptic) {
-                                                    val newBlocks = scheduleBlocks.toMutableList()
-                                                    newBlocks.add(ScheduleBlockState())
-                                                    scheduleBlocks = newBlocks
-                                                },
+                                                .height(56.dp),
                                             shape = RoundedCornerShape(16.dp),
                                             colors = ButtonDefaults.buttonColors(containerColor = colorScheme.background, contentColor = accentColor)
                                         ) {
@@ -603,8 +628,7 @@ fun AddEditBatchScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Students", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                                     TextButton(
-                                        onClick = {},
-                                        modifier = Modifier.bounceClick(haptic) { isBulkAddMode = !isBulkAddMode }
+                                        onClick = { isBulkAddMode = !isBulkAddMode }
                                     ) {
                                         Text(if (isBulkAddMode) "Manual Add" else "Bulk Add", fontWeight = FontWeight.Bold)
                                     }
@@ -622,25 +646,24 @@ fun AddEditBatchScreen(
                                             haptic = haptic
                                         )
                                         Button(
-                                            onClick = {},
+                                            onClick = {
+                                                val lines = bulkStudentsText.split("\n").filter { it.isNotBlank() }
+                                                val newStudents = lines.map { line ->
+                                                    val parts = line.split(",")
+                                                    val name = parts.getOrNull(0)?.trim() ?: ""
+                                                    val roll = parts.getOrNull(1)?.trim() ?: ""
+                                                    StudentImport(UUID.randomUUID().toString(), name, roll)
+                                                }
+                                                val combined = students.toMutableList()
+                                                combined.addAll(newStudents)
+                                                students = combined
+                                                bulkStudentsText = ""
+                                                isBulkAddMode = false
+                                                Toast.makeText(context, "Added ${newStudents.size} students", Toast.LENGTH_SHORT).show()
+                                            },
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .height(50.dp)
-                                                .bounceClick(haptic) {
-                                                    val lines = bulkStudentsText.split("\n").filter { it.isNotBlank() }
-                                                    val newStudents = lines.map { line ->
-                                                        val parts = line.split(",")
-                                                        val name = parts.getOrNull(0)?.trim() ?: ""
-                                                        val roll = parts.getOrNull(1)?.trim() ?: ""
-                                                        StudentImport(UUID.randomUUID().toString(), name, roll)
-                                                    }
-                                                    val combined = students.toMutableList()
-                                                    combined.addAll(newStudents)
-                                                    students = combined
-                                                    bulkStudentsText = ""
-                                                    isBulkAddMode = false
-                                                    Toast.makeText(context, "Added ${newStudents.size} students", Toast.LENGTH_SHORT).show()
-                                                },
+                                                .height(50.dp),
                                             shape = RoundedCornerShape(16.dp)
                                         ) {
                                             Text("Process Bulk List")
@@ -683,8 +706,7 @@ fun AddEditBatchScreen(
                                                     haptic = haptic
                                                 )
                                                 IconButton(
-                                                    onClick = {},
-                                                    modifier = Modifier.bounceClick(haptic) {
+                                                    onClick = {
                                                         val newStudents = students.toMutableList()
                                                         newStudents.removeAt(index)
                                                         students = newStudents
@@ -720,54 +742,53 @@ fun AddEditBatchScreen(
                     
                     StaggeredEntrance(index = 4) {
                         Button(
-                            onClick = {},
+                            onClick = {
+                                if (courseName.isBlank()) {
+                                    Toast.makeText(context, "Course name is required.", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                if (scheduleBlocks.any { it.selectedDays.isEmpty() }) {
+                                    Toast.makeText(context, "All time slots must have at least one day selected.", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                
+                                val finalSchedules = scheduleBlocks.filter { it.timeRange.isNotBlank() }.flatMap { block ->
+                                    block.selectedDays.map { day ->
+                                        ScheduleImport(day = day, time = block.timeRange, location = block.location.takeIf { it.isNotBlank() })
+                                    }
+                                } + selectedGridCells.map { cell ->
+                                    ScheduleImport(day = cell.first, time = cell.second, location = defaultLocation.takeIf { it.isNotBlank() })
+                                }
+                                
+                                val finalBatch = BatchImport(
+                                    batchId = batchId ?: UUID.randomUUID().toString(),
+                                    year = year,
+                                    semester = semester,
+                                    course = CourseImport(code = courseCode, name = courseName),
+                                    section = section,
+                                    location = defaultLocation,
+                                    weeklySchedule = finalSchedules,
+                                    students = students
+                                )
+                                
+                                isLoading = true
+                                viewModel.saveSingleBatch(
+                                    batch = finalBatch,
+                                    onSuccess = {
+                                        isLoading = false
+                                        Toast.makeText(context, "Saved successfully!", Toast.LENGTH_SHORT).show()
+                                        navController.popBackStack()
+                                    },
+                                    onError = { err ->
+                                        isLoading = false
+                                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                                    }
+                                )
+                            },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(64.dp)
-                                .shadow(8.dp, RoundedCornerShape(20.dp), spotColor = accentColor.copy(alpha = 0.5f))
-                                .bounceClick(haptic) {
-                                    if (courseName.isBlank()) {
-                                        Toast.makeText(context, "Course name is required.", Toast.LENGTH_SHORT).show()
-                                        return@bounceClick
-                                    }
-                                    if (scheduleBlocks.any { it.selectedDays.isEmpty() }) {
-                                        Toast.makeText(context, "All time slots must have at least one day selected.", Toast.LENGTH_SHORT).show()
-                                        return@bounceClick
-                                    }
-                                    
-                                    val finalSchedules = scheduleBlocks.filter { it.timeRange.isNotBlank() }.flatMap { block ->
-                                        block.selectedDays.map { day ->
-                                            ScheduleImport(day = day, time = block.timeRange, location = block.location.takeIf { it.isNotBlank() })
-                                        }
-                                    } + selectedGridCells.map { cell ->
-                                        ScheduleImport(day = cell.first, time = cell.second, location = defaultLocation.takeIf { it.isNotBlank() })
-                                    }
-                                    
-                                    val finalBatch = BatchImport(
-                                        batchId = batchId ?: UUID.randomUUID().toString(),
-                                        year = year,
-                                        semester = semester,
-                                        course = CourseImport(code = courseCode, name = courseName),
-                                        section = section,
-                                        location = defaultLocation,
-                                        weeklySchedule = finalSchedules,
-                                        students = students
-                                    )
-                                    
-                                    isLoading = true
-                                    viewModel.saveSingleBatch(
-                                        batch = finalBatch,
-                                        onSuccess = {
-                                            isLoading = false
-                                            Toast.makeText(context, "Saved successfully!", Toast.LENGTH_SHORT).show()
-                                            navController.popBackStack()
-                                        },
-                                        onError = { err ->
-                                            isLoading = false
-                                            Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                                        }
-                                    )
-                                },
+                                .shadow(8.dp, RoundedCornerShape(20.dp), spotColor = accentColor.copy(alpha = 0.5f)),
                             shape = RoundedCornerShape(20.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = accentColor)
                         ) {
@@ -830,7 +851,7 @@ fun AddEditBatchScreen(
                                         modifier = Modifier.fillMaxWidth().padding(8.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        IconButton(onClick = { isGridFullScreenOpen = false }, modifier = Modifier.bounceClick(haptic) { isGridFullScreenOpen = false }) {
+                                        IconButton(onClick = { isGridFullScreenOpen = false }) {
                                             Icon(Icons.Default.Close, contentDescription = "Close")
                                         }
                                         Spacer(Modifier.width(8.dp))
@@ -929,7 +950,7 @@ fun AddEditBatchScreen(
                                                     .background(colorScheme.surfaceVariant, RoundedCornerShape(8.dp)),
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Text(day, textAlign = TextAlign.Center, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium, color = accentColor)
+                                                Text(day.take(3), textAlign = TextAlign.Center, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium, color = accentColor)
                                             }
                                         }
                                         if (!isLandscape) Spacer(modifier = Modifier.width(40.dp))
@@ -939,11 +960,16 @@ fun AddEditBatchScreen(
                                     
                                     // Grid Cells
                                     Column(modifier = Modifier.verticalScroll(verticalScrollState)) {
-                                        gridHours.forEach { hour ->
+                                        gridHours.forEachIndexed { rowIndex, hour ->
                                             Row(modifier = Modifier.height(rowHeight), verticalAlignment = Alignment.CenterVertically) {
                                                 gridDays.forEachIndexed { colIndex, day ->
                                                     val isSelected = selectedGridCells.contains(Pair(day, hour))
-                                                    val isBooked = allBookedGridCells.contains(Pair(day, hour))
+                                                    
+                                                    val cellStartMin = rowIndex * 60
+                                                    val cellEndMin = (rowIndex + 1) * 60
+                                                    val isBooked = parsedBookedSlots.any { (bDay, bStart, bEnd) ->
+                                                        bDay == day && (bStart < cellEndMin && bEnd > cellStartMin)
+                                                    }
                                                     
                                                     val cellScale by animateFloatAsState(if (isSelected) 1f else 0.95f, spring(dampingRatio = 0.5f), label = "cellScale")
                                                     
@@ -1006,7 +1032,7 @@ fun AddEditBatchScreen(
                                 onClick = { isGridFullScreenOpen = false },
                                 containerColor = colorScheme.surface,
                                 contentColor = colorScheme.onSurface,
-                                modifier = Modifier.bounceClick(haptic) { isGridFullScreenOpen = false }.size(48.dp)
+                                modifier = Modifier.size(48.dp)
                             ) {
                                 Icon(Icons.Default.Close, contentDescription = "Close Grid")
                             }
