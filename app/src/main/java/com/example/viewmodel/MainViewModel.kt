@@ -1,6 +1,7 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -60,25 +61,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _currentUserEmail = MutableStateFlow("")
     val currentUserEmail: StateFlow<String> = _currentUserEmail.asStateFlow()
 
+    private val _userProfile = MutableStateFlow<com.example.models.UserProfile?>(null)
+    val userProfile: StateFlow<com.example.models.UserProfile?> = _userProfile.asStateFlow()
+
+    private val _isDarkTheme = MutableStateFlow(false)
+    val isDarkTheme: StateFlow<Boolean> = _isDarkTheme.asStateFlow()
+
+    fun toggleDarkTheme() {
+        _isDarkTheme.value = !_isDarkTheme.value
+    }
+
+    fun setDarkTheme(enabled: Boolean) {
+        _isDarkTheme.value = enabled
+    }
+
+    private var profileListener: com.google.firebase.firestore.ListenerRegistration? = null
+
     init {
         try {
+            val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+            val savedName = prefs.getString("profile_name", null)
+            if (!savedName.isNullOrBlank()) {
+                _userProfile.value = com.example.models.UserProfile(
+                    savedName,
+                    prefs.getString("profile_subject", "Computer Science & Engineering") ?: "Computer Science & Engineering",
+                    prefs.getString("profile_institute", "Department of CSE") ?: "Department of CSE"
+                )
+            }
+
             val currentAuth = auth
             if (currentAuth != null) {
                 _authState.value = currentAuth.currentUser != null
                 _currentUserEmail.value = currentAuth.currentUser?.email ?: ""
                 
                 if (currentAuth.currentUser != null) {
-                    syncDataFromFirebase()
+                    setupFirestoreListeners()
                 }
 
                 currentAuth.addAuthStateListener { firebaseAuth ->
-                    _authState.value = firebaseAuth.currentUser != null
-                    _currentUserEmail.value = firebaseAuth.currentUser?.email ?: ""
+                    val user = firebaseAuth.currentUser
+                    _authState.value = user != null
+                    _currentUserEmail.value = user?.email ?: ""
+                    if (user != null) {
+                        setupFirestoreListeners()
+                    } else {
+                        clearFirestoreListeners()
+                    }
                 }
             }
         } catch (e: Throwable) {
             Log.e("MainViewModel", "Firebase auth initialization/listener failed", e)
         }
+    }
+
+    private fun setupFirestoreListeners() {
+        val uid = auth?.currentUser?.uid ?: return
+        val db = firestore ?: return
+        
+        profileListener?.remove()
+        profileListener = db.collection("users").document(uid).collection("profile").document("info")
+            .addSnapshotListener { snapshot, e ->
+                if (e != null) {
+                    Log.e("Profile", "Listen failed.", e)
+                    return@addSnapshotListener
+                }
+                if (snapshot != null && snapshot.exists()) {
+                    val profile = snapshot.toObject(com.example.models.UserProfile::class.java)
+                    _userProfile.value = profile
+                } else {
+                    _userProfile.value = null
+                }
+            }
+            
+        syncDataFromFirebase()
+    }
+    
+    private fun clearFirestoreListeners() {
+        profileListener?.remove()
+        profileListener = null
+        _userProfile.value = null
     }
 
     fun setRole(isFaculty: Boolean) {
@@ -99,8 +160,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val batchesRef = firestore!!.collection("users").document(uid).collection("batches")
                     val snapshot = batchesRef.get().await()
                     
-                    val batches = snapshot.documents.mapNotNull { doc ->
-                        doc.toObject(com.example.data.BatchImport::class.java)?.copy(batchId = doc.id)
+                    val batches = mutableListOf<com.example.data.BatchImport>()
+                    for (doc in snapshot.documents) {
+                        var batch = doc.toObject(com.example.data.BatchImport::class.java)?.copy(batchId = doc.id)
+                        if (batch != null) {
+                            // Fetch students subcollection
+                            val studentsSnapshot = doc.reference.collection("students").get().await()
+                            val students = studentsSnapshot.documents.mapNotNull { it.toObject(com.example.data.StudentImport::class.java) }
+                            batch = batch.copy(students = students)
+                            batches.add(batch)
+                            
+                            // Sync attendance for this batch
+                            val attendanceSnapshot = doc.reference.collection("attendance").get().await()
+                            val attendanceRecords = attendanceSnapshot.documents.mapNotNull { it.toObject(AttendanceRecordEntity::class.java) }
+                            attendanceRecords.forEach { record ->
+                                repository.saveAttendance(record)
+                            }
+                        }
                     }
                     
                     if (batches.isNotEmpty()) {
@@ -108,17 +184,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val importData = com.example.data.ImportTimetableData(teacher = null, batches = batches)
                         repository.processTimetableImport(importData)
                         Log.d("FirebaseSync", "Synced ${batches.size} batches from Firestore")
-                        
-                        // Sync attendance
-                        val attendanceRef = firestore!!.collection("users").document(uid).collection("attendance")
-                        val attSnapshot = attendanceRef.get().await()
-                        val attendanceRecords = attSnapshot.documents.mapNotNull { doc ->
-                            doc.toObject(AttendanceRecordEntity::class.java)
-                        }
-                        attendanceRecords.forEach { record ->
-                            repository.saveAttendance(record)
-                        }
-                        Log.d("FirebaseSync", "Synced ${attendanceRecords.size} attendance records from Firestore")
                     } else {
                         Log.d("FirebaseSync", "No batches found on Firestore for this user")
                     }
@@ -127,6 +192,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             onComplete()
+        }
+    }
+
+    fun signInAnonymously(onSuccess: (Boolean) -> Unit, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val currentAuth = auth
+                if (currentAuth == null) {
+                    onSuccess(false)
+                    return@launch
+                }
+                currentAuth.signInAnonymously().await()
+                
+                var hasProfile = false
+                val uid = currentAuth.currentUser?.uid
+                if (uid != null && firestore != null) {
+                    try {
+                        val doc = firestore!!.collection("users").document(uid).collection("profile").document("info").get().await()
+                        hasProfile = doc.exists()
+                    } catch (e: Exception) {
+                        Log.e("Profile", "Error checking profile", e)
+                    }
+                }
+                
+                // If it's a fresh anonymous account, we can optionally populate it with dummy data right away,
+                // but let's just let them go to profile setup first!
+                
+                onSuccess(hasProfile)
+            } catch (e: Throwable) {
+                Log.w("Auth", "Anonymous sign-in failed (likely disabled). Falling back to local offline mode.")
+                // Fallback to local offline mode for demo instead of erroring out
+                onSuccess(false)
+            }
         }
     }
 
@@ -140,21 +238,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val credential = GoogleAuthProvider.getCredential(idToken, null)
                 currentAuth.signInWithCredential(credential).await()
-                syncDataFromFirebase {
-                    viewModelScope.launch {
-                        var hasProfile = false
-                        val uid = currentAuth.currentUser?.uid
-                        if (uid != null && firestore != null) {
-                            try {
-                                val doc = firestore!!.collection("users").document(uid).collection("profile").document("info").get().await()
-                                hasProfile = doc.exists()
-                            } catch (e: Exception) {
-                                Log.e("Profile", "Error checking profile", e)
-                            }
-                        }
-                        onSuccess(hasProfile)
+                
+                // Firestore listeners setup is triggered by addAuthStateListener
+                
+                var hasProfile = false
+                val uid = currentAuth.currentUser?.uid
+                if (uid != null && firestore != null) {
+                    try {
+                        val doc = firestore!!.collection("users").document(uid).collection("profile").document("info").get().await()
+                        hasProfile = doc.exists()
+                    } catch (e: Exception) {
+                        Log.e("Profile", "Error checking profile", e)
                     }
                 }
+                onSuccess(hasProfile)
             } catch (e: Throwable) {
                 Log.e("Auth", "Google sign-in failed", e)
                 onError(e.message ?: "Authentication failed")
@@ -165,6 +262,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun saveUserProfile(name: String, subject: String, institute: String, onComplete: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
+                val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+                prefs.edit()
+                    .putString("profile_name", name)
+                    .putString("profile_subject", subject)
+                    .putString("profile_institute", institute)
+                    .putBoolean("has_profile", true)
+                    .apply()
+
+                _userProfile.value = com.example.models.UserProfile(name, subject, institute)
+                
                 val uid = auth?.currentUser?.uid
                 if (uid != null && firestore != null) {
                     val profileData = hashMapOf(
@@ -173,16 +280,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "institute" to institute
                     )
                     firestore!!.collection("users").document(uid).collection("profile").document("info").set(profileData).await()
-                    onComplete()
                 } else {
-                    onError("Auth or Firestore not initialized")
+                    Log.d("Profile", "Auth not available, saved profile locally in preferences.")
                 }
+                onComplete()
             } catch (e: Exception) {
                 Log.e("Profile", "Error saving profile", e)
                 onError(e.message ?: "Error saving profile")
             }
         }
     }
+
     fun signOut() {
         try {
             auth?.signOut()
@@ -190,17 +298,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Log.e("Auth", "Sign out failed", e)
         }
     }
-    
+
     fun wipeAllMyData(onComplete: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
-                // Wipe Firestore data (if any exists) for this user FIRST
                 val currentAuth = auth
                 val currentFirestore = firestore
                 val uid = currentAuth?.currentUser?.uid
                 if (currentFirestore != null && uid != null) {
                     Log.d("FirebaseSync", "User UID: $uid")
-                    Log.d("FirebaseSync", "Writing to path: users/$uid/batches") // Using generic wording for deletion as well to match user log request
+                    Log.d("FirebaseSync", "Writing to path: users/$uid/batches")
                     val collections = listOf("batches", "students", "attendance")
                     for (collection in collections) {
                         val ref = currentFirestore.collection("users").document(uid).collection(collection)
@@ -212,7 +319,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     Log.d("FirebaseSync", "Write success: true")
                 }
                 
-                // Wipe local DB ONLY AFTER Firebase confirms deletion
                 repository.wipeAllData()
                 onComplete()
             } catch (e: Throwable) {
@@ -221,51 +327,125 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-    
-    fun loadDummyData() {
+
+    fun initDemoProfileIfNeeded() {
+        val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+        val savedName = prefs.getString("profile_name", null)
+        if (!savedName.isNullOrBlank()) {
+            _userProfile.value = com.example.models.UserProfile(
+                savedName,
+                prefs.getString("profile_subject", "Computer Science & Engineering") ?: "Computer Science & Engineering",
+                prefs.getString("profile_institute", "Department of CSE") ?: "Department of CSE"
+            )
+        } else {
+            // One-time creation of demo account profile
+            val defaultName = "Prof. Yash Thakur"
+            val defaultSubject = "Computer Science & Engineering"
+            val defaultInstitute = "Department of CSE"
+            prefs.edit()
+                .putString("profile_name", defaultName)
+                .putString("profile_subject", defaultSubject)
+                .putString("profile_institute", defaultInstitute)
+                .putBoolean("has_profile", true)
+                .apply()
+            _userProfile.value = com.example.models.UserProfile(defaultName, defaultSubject, defaultInstitute)
+        }
+    }
+
+    fun loginAsDemoFaculty(onComplete: () -> Unit) {
         viewModelScope.launch {
             try {
-                val days = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-                
-                val courses = listOf(
-                    CourseUpload("CSE-4SEM-A-DBMS", "Database Management Systems", "CS301", 4, listOf(
-                        StudentUpload("S1", "Sakshi Sharma", "24BCS025"),
-                        StudentUpload("S2", "Rahul Verma", "24BCS026"),
-                        StudentUpload("S3", "Priya Singh", "24BCS027")
-                    )),
-                    CourseUpload("CSE-4SEM-B-DSA", "Data Structures & Algorithms", "CS302", 4, listOf(
-                        StudentUpload("S4", "Amit Kumar", "24BCS028"),
-                        StudentUpload("S5", "Neha Gupta", "24BCS029")
-                    )),
-                    CourseUpload("CSE-6SEM-A-OS", "Operating Systems", "CS303", 4, listOf(
-                        StudentUpload("S6", "Vikram Singh", "24BCS030")
-                    )),
-                    CourseUpload("ECE-4SEM-A-CN", "Computer Networks", "CS304", 4, listOf(
-                        StudentUpload("S7", "Pooja Patel", "24BCS031")
-                    )),
-                    CourseUpload("IT-5SEM-A-SE", "Software Engineering", "CS305", 4, listOf(
-                        StudentUpload("S8", "Arjun Reddy", "24BCS032")
-                    ))
-                )
+                setRole(true)
+                initDemoProfileIfNeeded()
 
-                val weeklySchedule = mutableListOf<ScheduleSlotUpload>()
-                var slotIdCounter = 1
-
-                for (day in days) {
-                    weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-4SEM-A-DBMS", day, "09:00", "10:30", "Room 401", "A"))
-                    weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-4SEM-B-DSA", day, "10:30", "11:30", "Lab 2", "B"))
-                    // Break 11:30 - 12:00
-                    weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-6SEM-A-OS", day, "12:00", "13:30", "Room 305", "A"))
-                    // Break 13:30 - 14:30
-                    weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "ECE-4SEM-A-CN", day, "14:30", "15:30", "Lab 1", "C"))
-                    weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "IT-5SEM-A-SE", day, "15:30", "17:00", "Room 201", "A"))
+                val slots = repository.getAllScheduleSlotsSync()
+                if (slots.isEmpty()) {
+                    loadDummyDataSuspend()
                 }
-                
-                val data = UploadData(courses, weeklySchedule)
-                repository.processUploadData(data)
+
+                try {
+                    auth?.signInAnonymously()?.await()
+                } catch (e: Throwable) {
+                    // Anonymous auth disabled or offline; ignore for demo mode
+                }
             } catch (e: Throwable) {
-                e.printStackTrace()
+                Log.e("DemoLogin", "Error logging into demo faculty", e)
+            } finally {
+                onComplete()
             }
+        }
+    }
+
+    fun loginAsDemoStudent(onComplete: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                setRole(false)
+                val slots = repository.getAllScheduleSlotsSync()
+                if (slots.isEmpty()) {
+                    loadDummyDataSuspend()
+                }
+
+                try {
+                    auth?.signInAnonymously()?.await()
+                } catch (e: Throwable) {
+                    // Ignore for demo mode
+                }
+            } catch (e: Throwable) {
+                Log.e("DemoLogin", "Error logging into demo student", e)
+            } finally {
+                onComplete()
+            }
+        }
+    }
+
+    suspend fun loadDummyDataSuspend() {
+        try {
+            val days = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+            
+            val courses = listOf(
+                CourseUpload("CSE-4SEM-A-DBMS", "Database Management Systems", "CS301", 4, listOf(
+                    StudentUpload("S1", "Sakshi Sharma", "24BCS025"),
+                    StudentUpload("S2", "Rahul Verma", "24BCS026"),
+                    StudentUpload("S3", "Priya Singh", "24BCS027")
+                )),
+                CourseUpload("CSE-4SEM-B-DSA", "Data Structures & Algorithms", "CS302", 4, listOf(
+                    StudentUpload("S4", "Amit Kumar", "24BCS028"),
+                    StudentUpload("S5", "Neha Gupta", "24BCS029")
+                )),
+                CourseUpload("CSE-6SEM-A-OS", "Operating Systems", "CS303", 4, listOf(
+                    StudentUpload("S6", "Vikram Singh", "24BCS030")
+                )),
+                CourseUpload("ECE-4SEM-A-CN", "Computer Networks", "CS304", 4, listOf(
+                    StudentUpload("S7", "Pooja Patel", "24BCS031")
+                )),
+                CourseUpload("IT-5SEM-A-SE", "Software Engineering", "CS305", 4, listOf(
+                    StudentUpload("S8", "Arjun Reddy", "24BCS032")
+                ))
+            )
+
+            val weeklySchedule = mutableListOf<ScheduleSlotUpload>()
+            var slotIdCounter = 1
+
+            for (day in days) {
+                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-4SEM-A-DBMS", day, "09:00", "10:30", "Room 401", "A"))
+                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-4SEM-B-DSA", day, "10:30", "11:30", "Lab 2", "B"))
+                // Break 11:30 - 12:00
+                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-6SEM-A-OS", day, "12:00", "13:30", "Room 305", "A"))
+                // Break 13:30 - 14:30
+                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "ECE-4SEM-A-CN", day, "14:30", "15:30", "Lab 1", "C"))
+                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "IT-5SEM-A-SE", day, "15:30", "17:00", "Room 201", "A"))
+            }
+            
+            val data = UploadData(courses, weeklySchedule)
+            repository.processUploadData(data)
+        } catch (e: Throwable) {
+            e.printStackTrace()
+        }
+    }
+
+    fun loadDummyData() {
+        viewModelScope.launch {
+            loadDummyDataSuspend()
         }
     }
 
@@ -295,7 +475,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     data.batches?.forEach { batch ->
                         val docId = batch.batchId ?: java.util.UUID.randomUUID().toString()
                         val updatedBatch = batch.copy(batchId = docId)
-                        batchesRef.document(docId).set(updatedBatch).await()
+                        val batchRef = batchesRef.document(docId)
+                        
+                        val batchMeta = hashMapOf(
+                            "batchId" to docId,
+                            "year" to updatedBatch.year,
+                            "semester" to updatedBatch.semester,
+                            "course" to updatedBatch.course,
+                            "section" to updatedBatch.section,
+                            "location" to updatedBatch.location,
+                            "weeklySchedule" to updatedBatch.weeklySchedule
+                        )
+                        batchRef.set(batchMeta).await()
+                        
+                        val studentsRef = batchRef.collection("students")
+                        updatedBatch.students?.forEach { student ->
+                            val studentId = student.id ?: java.util.UUID.randomUUID().toString()
+                            studentsRef.document(studentId).set(student.copy(id = studentId)).await()
+                        }
                         android.util.Log.d("TimetableImport", "Saved batch $docId to Firestore.")
                     }
                 }
@@ -375,11 +572,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val updatedBatch = batch.copy(batchId = docId)
 
                 if (currentFirestore != null && uid != null) {
-                    val batchesRef = currentFirestore.collection("users").document(uid).collection("batches")
-                    batchesRef.document(docId).set(updatedBatch).await()
+                    val batchRef = currentFirestore.collection("users").document(uid).collection("batches").document(docId)
+                    val batchMeta = hashMapOf(
+                        "batchId" to docId,
+                        "year" to updatedBatch.year,
+                        "semester" to updatedBatch.semester,
+                        "course" to updatedBatch.course,
+                        "section" to updatedBatch.section,
+                        "location" to updatedBatch.location,
+                        "weeklySchedule" to updatedBatch.weeklySchedule
+                    )
+                    batchRef.set(batchMeta).await()
+                    
+                    val studentsRef = batchRef.collection("students")
+                    updatedBatch.students?.forEach { student ->
+                        val studentId = student.id ?: java.util.UUID.randomUUID().toString()
+                        studentsRef.document(studentId).set(student.copy(id = studentId)).await()
+                    }
                 }
 
-                // Instead of processing full data, we process just this batch. We need to clear its old schedules/students first.
                 repository.dao.deleteStudentsByCourseId(docId)
                 repository.dao.deleteScheduleSlotsByCourseId(docId)
                 
@@ -404,18 +615,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     
     fun getAttendanceForSession(date: String, slotId: String) = repository.getAttendanceForSession(date, slotId)
     fun getScheduleSlotsForCourse(courseId: String) = repository.getScheduleSlotsForCourse(courseId)
+    suspend fun getAllScheduleSlotsSync() = repository.getAllScheduleSlotsSync()
     fun getAttendanceForCourse(courseId: String) = repository.getAttendanceForCourse(courseId)
     
     fun markAttendance(date: String, slotId: String, studentId: String, status: String) {
         viewModelScope.launch {
-            val uid = auth?.currentUser?.uid
-            val attendanceRef = if (firestore != null && uid != null) {
-                firestore!!.collection("users").document(uid).collection("attendance")
-            } else null
+            val uid = auth?.currentUser?.uid ?: return@launch
+            val db = firestore ?: return@launch
+            
+            // Need batchId to nest correctly.
+            val slot = repository.getScheduleSlotById(slotId) ?: return@launch
+            val batchId = slot.courseId
+            
+            val attendanceRef = db.collection("users").document(uid)
+                .collection("batches").document(batchId)
+                .collection("attendance")
             
             if (status == "NONE") {
                 repository.deleteAttendance(date, slotId, studentId)
-                attendanceRef?.document("${date}_${slotId}_$studentId")?.delete()
+                attendanceRef.document("${date}_${slotId}_$studentId").delete()
             } else {
                 repository.deleteAttendance(date, slotId, studentId)
                 val record = AttendanceRecordEntity(
@@ -425,7 +643,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     status = status
                 )
                 repository.saveAttendance(record)
-                attendanceRef?.document("${date}_${slotId}_$studentId")?.set(record)
+                attendanceRef.document("${date}_${slotId}_$studentId").set(record)
             }
         }
     }
@@ -436,11 +654,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     
     fun markAllStudentsAttendance(date: String, slotId: String, studentIds: List<String>, status: String) {
         viewModelScope.launch {
-            val uid = auth?.currentUser?.uid
-            val batch = if (firestore != null && uid != null) firestore!!.batch() else null
-            val attendanceRef = if (firestore != null && uid != null) {
-                firestore!!.collection("users").document(uid).collection("attendance")
-            } else null
+            val uid = auth?.currentUser?.uid ?: return@launch
+            val db = firestore ?: return@launch
+            val batch = db.batch()
+            
+            val slot = repository.getScheduleSlotById(slotId) ?: return@launch
+            val batchId = slot.courseId
+            
+            val attendanceRef = db.collection("users").document(uid)
+                .collection("batches").document(batchId)
+                .collection("attendance")
             
             studentIds.forEach { studentId ->
                 val record = AttendanceRecordEntity(
@@ -450,11 +673,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     status = status
                 )
                 repository.saveAttendance(record)
-                if (batch != null && attendanceRef != null) {
-                    batch.set(attendanceRef.document("${date}_${slotId}_$studentId"), record)
-                }
+                batch.set(attendanceRef.document("${date}_${slotId}_$studentId"), record)
             }
-            batch?.commit()
+            batch.commit()
         }
     }
 
@@ -466,15 +687,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val doc = firestore!!.collection("users").document(uid).collection("profile").document("info").get().await()
                     if (doc.exists()) {
                         val profile = doc.toObject(com.example.models.UserProfile::class.java)
-                        onSuccess(profile)
-                    } else {
-                        onSuccess(null)
+                        if (profile != null) {
+                            _userProfile.value = profile
+                            onSuccess(profile)
+                            return@launch
+                        }
                     }
                 } catch (e: Exception) {
+                    Log.w("Profile", "Firestore load failed, checking local preferences")
+                }
+            }
+            
+            if (_userProfile.value != null) {
+                onSuccess(_userProfile.value)
+            } else {
+                val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+                val savedName = prefs.getString("profile_name", null)
+                if (!savedName.isNullOrBlank()) {
+                    val profile = com.example.models.UserProfile(
+                        savedName,
+                        prefs.getString("profile_subject", "Computer Science & Engineering") ?: "Computer Science & Engineering",
+                        prefs.getString("profile_institute", "Department of CSE") ?: "Department of CSE"
+                    )
+                    _userProfile.value = profile
+                    onSuccess(profile)
+                } else {
                     onSuccess(null)
                 }
-            } else {
-                onSuccess(null)
             }
         }
     }

@@ -24,6 +24,9 @@ interface AppDao {
     @Query("SELECT * FROM schedule_slots WHERE courseId = :courseId ORDER BY dayOfWeek, startTime ASC")
     fun getScheduleSlotsForCourse(courseId: String): Flow<List<ScheduleSlotEntity>>
 
+    @Query("SELECT * FROM schedule_slots")
+    suspend fun getAllScheduleSlotsSync(): List<ScheduleSlotEntity>
+
     @Query("SELECT * FROM schedule_slots WHERE courseId = :courseId")
     suspend fun getScheduleSlotsForCourseSync(courseId: String): List<ScheduleSlotEntity>
     

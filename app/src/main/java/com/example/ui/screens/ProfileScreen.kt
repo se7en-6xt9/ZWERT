@@ -11,7 +11,10 @@ import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,13 +32,83 @@ import androidx.navigation.NavController
 fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
     val email by viewModel.currentUserEmail.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
+    val vmProfile by viewModel.userProfile.collectAsState()
     var userProfile by remember { mutableStateOf<com.example.models.UserProfile?>(null) }
-    LaunchedEffect(Unit) {
-        viewModel.loadUserProfile { profile ->
-            userProfile = profile
+
+    LaunchedEffect(vmProfile) {
+        if (vmProfile != null) {
+            userProfile = vmProfile
+        } else {
+            viewModel.loadUserProfile { profile ->
+                userProfile = profile
+            }
         }
     }
+    
     var showWipeDialog by remember { mutableStateOf(false) }
+    var showEditProfileDialog by remember { mutableStateOf(false) }
+    var editName by remember { mutableStateOf("") }
+    var editSubject by remember { mutableStateOf("") }
+    var editInstitute by remember { mutableStateOf("") }
+
+    if (showEditProfileDialog) {
+        AlertDialog(
+            onDismissRequest = { showEditProfileDialog = false },
+            title = { Text("Edit Profile", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        label = { Text("Full Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editSubject,
+                        onValueChange = { editSubject = it },
+                        label = { Text("Department / Subject") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editInstitute,
+                        onValueChange = { editInstitute = it },
+                        label = { Text("Institute / Organization") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (editName.isNotBlank()) {
+                            viewModel.saveUserProfile(
+                                editName.trim(),
+                                editSubject.trim().ifBlank { "Computer Science & Engineering" },
+                                editInstitute.trim().ifBlank { "Department of CSE" },
+                                onComplete = {
+                                    showEditProfileDialog = false
+                                    android.widget.Toast.makeText(context, "Profile updated", android.widget.Toast.LENGTH_SHORT).show()
+                                },
+                                onError = { err ->
+                                    android.widget.Toast.makeText(context, err, android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        }
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditProfileDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     if (showWipeDialog) {
         AlertDialog(
@@ -80,6 +153,16 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
+                actions = {
+                    IconButton(onClick = {
+                        editName = userProfile?.name ?: "Prof. Yash Thakur"
+                        editSubject = userProfile?.subject ?: "Computer Science & Engineering"
+                        editInstitute = userProfile?.institute ?: "Department of CSE"
+                        showEditProfileDialog = true
+                    }) {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit Profile")
+                    }
+                },
                 colors = TopAppBarDefaults.largeTopAppBarColors(containerColor = Color.Transparent)
             )
         }
@@ -104,14 +187,14 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
             Spacer(modifier = Modifier.height(24.dp))
             
             Text(
-                text = "Prof. Yash Thakur",
+                text = userProfile?.name?.takeIf { it.isNotBlank() } ?: "Prof. Yash Thakur",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.ExtraBold,
                 color = MaterialTheme.colorScheme.onBackground
             )
             
             Text(
-                text = "Computer Science & Engineering",
+                text = userProfile?.subject?.takeIf { it.isNotBlank() } ?: "Computer Science & Engineering",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -142,13 +225,33 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                         }
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(8.dp)) {
-                        Icon(Icons.Default.Business, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column {
-                            Text("Institute", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(userProfile?.institute?.takeIf { it.isNotBlank() } ?: "Not Set", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                    val isDarkTheme by viewModel.isDarkTheme.collectAsState()
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = if (isDarkTheme) Icons.Default.DarkMode else Icons.Default.LightMode,
+                                contentDescription = "Theme",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column {
+                                Text("Appearance", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (isDarkTheme) "Dark Mode" else "Light Mode", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                            }
                         }
+                        Switch(
+                            checked = isDarkTheme,
+                            onCheckedChange = { viewModel.toggleDarkTheme() }
+                        )
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(8.dp)) {
@@ -185,7 +288,6 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
             Button(
                 onClick = {
                     viewModel.signOut()
-                    viewModel.wipeAllData()
                     navController.navigate("login") { popUpTo(0) }
                 },
                 modifier = Modifier.fillMaxWidth().height(56.dp),

@@ -181,10 +181,13 @@ fun LoginScreen(
 
         ElevatedButton(
             onClick = {
-                viewModel.setRole(true)
-                viewModel.loadDummyData()
-                navController.navigate("faculty_dashboard") {
-                    popUpTo("login") { inclusive = true }
+                if (isSigningIn) return@ElevatedButton
+                isSigningIn = true
+                viewModel.loginAsDemoFaculty {
+                    isSigningIn = false
+                    navController.navigate("faculty_dashboard") {
+                        popUpTo("login") { inclusive = true }
+                    }
                 }
             },
             modifier = Modifier
@@ -208,10 +211,13 @@ fun LoginScreen(
 
         ElevatedButton(
             onClick = {
-                viewModel.setRole(false)
-                viewModel.loadDummyData()
-                navController.navigate("student_dashboard") {
-                    popUpTo("login") { inclusive = true }
+                if (isSigningIn) return@ElevatedButton
+                isSigningIn = true
+                viewModel.loginAsDemoStudent {
+                    isSigningIn = false
+                    navController.navigate("student_dashboard") {
+                        popUpTo("login") { inclusive = true }
+                    }
                 }
             },
             modifier = Modifier

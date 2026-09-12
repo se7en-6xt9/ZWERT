@@ -5,6 +5,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -18,14 +19,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import com.example.ui.components.FloatingGlassNavBar
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -35,6 +39,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -54,8 +59,8 @@ import kotlin.math.abs
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FacultyDashboardScreen(navController: NavController, viewModel: MainViewModel) {
-    var isDarkTheme by remember { mutableStateOf(false) }
-    val accentColor = Color(0xFF6750A4) // Fixed Purple Accent
+    val isDarkTheme by viewModel.isDarkTheme.collectAsState()
+    val accentColor = Color(0xFF6366F1) // Indigo accent matching AppTheme
 
     val colorScheme = if (isDarkTheme) {
         darkColorScheme(
@@ -86,7 +91,7 @@ fun FacultyDashboardScreen(navController: NavController, viewModel: MainViewMode
             navController = navController,
             viewModel = viewModel,
             isDarkTheme = isDarkTheme,
-            onThemeToggle = { isDarkTheme = !isDarkTheme },
+            onThemeToggle = { viewModel.toggleDarkTheme() },
             accentColor = accentColor
         )
     }
@@ -107,7 +112,7 @@ fun DashboardContent(
     var currentLiveTime by remember { mutableStateOf(LocalTime.now()) }
     LaunchedEffect(Unit) {
         while (true) {
-            delay(30000L) // 30 seconds
+            delay(15000L) // 15 seconds
             currentLiveTime = LocalTime.now()
         }
     }
@@ -118,48 +123,13 @@ fun DashboardContent(
     }
 
     val pagerState = rememberPagerState(initialPage = currentDayIndex, pageCount = { 7 })
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val haptic = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
+    var currentTab by remember { mutableIntStateOf(0) }
 
     Scaffold(
-        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        containerColor = Color.Transparent, 
-        topBar = {
-            LargeTopAppBar(
-                title = { 
-                    DashboardInfoBlock(
-                        viewModel = viewModel, 
-                        navController = navController,
-                        dateStr = today.format(DateTimeFormatter.ofPattern("dd MMM yyyy"))
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onThemeToggle() 
-                    }) {
-                        Icon(if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode, "Toggle Theme")
-                    }
-                },
-                colors = TopAppBarDefaults.largeTopAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
-                ),
-                scrollBehavior = scrollBehavior
-            )
-        },
-        bottomBar = {
-            ModernBottomNavigation()
-        },
-        floatingActionButton = {
-            ExpandableFAB(navController = navController)
-        }
+        containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { paddingValues ->
         Box(modifier = Modifier.fillMaxSize()) {
             AnimatedGradientMesh(accentColor = accentColor, isDark = isDarkTheme)
@@ -167,78 +137,31 @@ fun DashboardContent(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(paddingValues)
+                    .statusBarsPadding()
             ) {
-                // Innovative Day Selector
-                ScrollableTabRow(
-                    selectedTabIndex = pagerState.currentPage,
-                    containerColor = Color.Transparent,
-                    edgePadding = 16.dp,
-                    divider = {},
-                    indicator = { tabPositions ->
-                        if (pagerState.currentPage < tabPositions.size) {
-                            val currentPage = pagerState.currentPage
-                            val fraction = pagerState.currentPageOffsetFraction
-                            val currentTab = tabPositions[currentPage]
-                            
-                            val nextTabIndex = if (fraction > 0) minOf(currentPage + 1, tabPositions.lastIndex) else maxOf(currentPage - 1, 0)
-                            val nextTab = tabPositions[nextTabIndex]
-                            
-                            val targetLeft = currentTab.left + (nextTab.left - currentTab.left) * abs(fraction)
-                            val targetWidth = currentTab.width + (nextTab.width - currentTab.width) * abs(fraction)
-                            
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .wrapContentSize(Alignment.CenterStart)
-                                    .offset(x = targetLeft)
-                                    .width(targetWidth)
-                                    .fillMaxHeight()
-                                    .padding(vertical = 8.dp, horizontal = 4.dp)
-                                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(24.dp))
-                                    .zIndex(-1f)
-                            )
-                        }
-                    }
-                ) {
-                    weekDates.forEachIndexed { index, date ->
-                        val isSelected = pagerState.currentPage == index
-                        Tab(
-                            selected = isSelected,
-                            onClick = { 
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                coroutineScope.launch { pagerState.animateScrollToPage(index) } 
-                            },
-                            modifier = Modifier.height(84.dp).zIndex(1f),
-                            selectedContentColor = MaterialTheme.colorScheme.onPrimary,
-                            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                            ) {
-                                Text(date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(date.dayOfMonth.toString(), fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
-                                
-                                Spacer(modifier = Modifier.height(6.dp))
-                                if (date == today) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary)
-                                    )
-                                } else {
-                                    Box(modifier = Modifier.size(6.dp))
-                                }
-                            }
-                        }
-                    }
-                }
+                Spacer(modifier = Modifier.height(6.dp))
 
-                Spacer(modifier = Modifier.height(16.dp))
+                // 1. ELEVATED PROFESSOR NAME PROFILE HEADER
+                ElevatedFacultyProfileHeader(
+                    viewModel = viewModel,
+                    navController = navController,
+                    dateStr = today.format(DateTimeFormatter.ofPattern("dd MMM yyyy")),
+                    accentColor = accentColor
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // 2. DAY-SELECTOR ROW WITH SLIDING INDICATOR & EDGE FADES
+                DaySelectorCard(
+                    weekDates = weekDates,
+                    pagerState = pagerState,
+                    today = today,
+                    isDarkTheme = isDarkTheme,
+                    coroutineScope = coroutineScope,
+                    haptic = haptic
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // Pager for swipeable days
                 HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
@@ -252,7 +175,7 @@ fun DashboardContent(
 
                     LaunchedEffect(page) {
                         isLoading = true
-                        delay(300) // Simulated load
+                        delay(250) // Simulated load
                         isLoading = false
                     }
 
@@ -275,7 +198,7 @@ fun DashboardContent(
                     ) { loading ->
                         if (loading) {
                             LazyColumn(
-                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 120.dp),
                                 verticalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
                                 items(3) { SkeletonCard() }
@@ -285,15 +208,17 @@ fun DashboardContent(
                         } else {
                             LazyColumn(
                                 state = listState,
-                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 100.dp),
+                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 120.dp),
                                 verticalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
                                 itemsIndexed(scheduleSlots, key = { _, slot -> slot.id }) { index, slot ->
                                     val isLive = isTodayPage && isSlotLive(slot, currentLiveTime)
+                                    val timeHint = if (isTodayPage) getRelativeTimeHint(slot, currentLiveTime) else null
                                     StaggeredAnimatedItem(index = index) {
                                         GlassLectureCard(
                                             slot = slot,
                                             isLive = isLive,
+                                            timeHint = timeHint,
                                             onClick = { navController.navigate("lecture_view/${slot.id}") }
                                         )
                                     }
@@ -303,40 +228,193 @@ fun DashboardContent(
                     }
                 }
             }
+
+            // 4. FLOATING iOS-STYLE GLASS BAR
+            FloatingGlassNavBar(
+                selectedTabIndex = currentTab,
+                onTabSelected = { currentTab = it },
+                onNavigateSchedule = { currentTab = 0 },
+                onNavigateAIImport = { navController.navigate("import_timetable") },
+                onNavigateAddClass = { navController.navigate("add_edit_batch") },
+                onNavigateManageClasses = { navController.navigate("manage_classes") },
+                onNavigateProfile = { navController.navigate("profile") },
+                isDarkTheme = isDarkTheme,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+            )
         }
     }
 }
 
 @Composable
-fun DashboardInfoBlock(viewModel: MainViewModel, navController: NavController, dateStr: String) {
-    Box {
+fun ElevatedFacultyProfileHeader(
+    viewModel: MainViewModel,
+    navController: NavController,
+    dateStr: String,
+    accentColor: Color
+) {
+    val userProfile by viewModel.userProfile.collectAsState()
+    val name = userProfile?.name?.takeIf { it.isNotBlank() } ?: "Prof. Yash Thakur"
+    val initials = name.split(" ").mapNotNull { it.firstOrNull()?.uppercase() }.take(2).joinToString("")
+
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.98f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "profileScale"
+    )
+    val haptic = LocalHapticFeedback.current
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    navController.navigate("profile")
+                }
+            ),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            1.dp,
+            if (isPressed) accentColor.copy(alpha = 0.40f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
+        ),
+        shadowElevation = if (isPressed) 1.dp else 3.dp
+    ) {
         Row(
-            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
-                .clip(RoundedCornerShape(16.dp))
-                .clickable { navController.navigate("profile") }
-                .padding(vertical = 4.dp, horizontal = 4.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            // Modern gradient avatar with active status dot
+            Box(
+                contentAlignment = Alignment.BottomEnd
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(50.dp)
+                        .shadow(
+                            elevation = 6.dp,
+                            shape = CircleShape,
+                            spotColor = accentColor.copy(alpha = 0.35f),
+                            ambientColor = Color.Black.copy(alpha = 0.15f)
+                        )
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    Color(0xFF4F46E5),
+                                    Color(0xFF7C3AED),
+                                    Color(0xFF9333EA)
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = initials,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+
+                // Active status indicator
+                Box(
+                    modifier = Modifier
+                        .size(13.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(2.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF10B981))
+                )
+            }
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            // Well-settled text info without any overlapping
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.height(3.dp))
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "Faculty Dashboard",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        color = accentColor
+                    )
+                    Text(
+                        text = "•",
+                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                    Text(
+                        text = dateStr,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Normal
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // Interactive chevron indicator
             Box(
                 modifier = Modifier
-                    .size(46.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer),
+                    .background(
+                        if (isPressed) accentColor.copy(alpha = 0.15f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    ),
                 contentAlignment = Alignment.Center
             ) {
-                Text("YT", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Prof. Yash Thakur", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                    Text(" • CSE", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
-                }
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "Faculty Dashboard • $dateStr",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = "View Profile",
+                    tint = if (isPressed) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }
@@ -344,7 +422,224 @@ fun DashboardInfoBlock(viewModel: MainViewModel, navController: NavController, d
 }
 
 @Composable
-fun GlassLectureCard(slot: ScheduleSlotEntity, isLive: Boolean = false, onClick: () -> Unit) {
+fun DaySelectorCard(
+    weekDates: List<LocalDate>,
+    pagerState: androidx.compose.foundation.pager.PagerState,
+    today: LocalDate,
+    isDarkTheme: Boolean,
+    coroutineScope: kotlinx.coroutines.CoroutineScope,
+    haptic: androidx.compose.ui.hapticfeedback.HapticFeedback
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "todayPulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.82f,
+        targetValue = 1.35f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(850, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseScale"
+    )
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.55f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(850, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseAlpha"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .shadow(
+                elevation = 4.dp,
+                shape = RoundedCornerShape(22.dp),
+                spotColor = Color.Black.copy(alpha = 0.12f),
+                ambientColor = Color.Black.copy(alpha = 0.06f)
+            )
+            .clip(RoundedCornerShape(22.dp))
+            .background(
+                if (isDarkTheme) Color(0xFF1E1E24).copy(alpha = 0.65f)
+                else Color(0xFFFFFFFF).copy(alpha = 0.75f)
+            )
+            .border(
+                1.dp,
+                if (isDarkTheme) Color.White.copy(alpha = 0.08f)
+                else Color.White.copy(alpha = 0.55f),
+                RoundedCornerShape(22.dp)
+            )
+    ) {
+        ScrollableTabRow(
+            selectedTabIndex = pagerState.currentPage,
+            containerColor = Color.Transparent,
+            edgePadding = 12.dp,
+            divider = {},
+            indicator = { tabPositions ->
+                if (pagerState.currentPage < tabPositions.size) {
+                    val currentTab = tabPositions[pagerState.currentPage]
+                    val fraction = pagerState.currentPageOffsetFraction
+                    val nextTabIndex = if (fraction > 0) {
+                        minOf(pagerState.currentPage + 1, tabPositions.lastIndex)
+                    } else if (fraction < 0) {
+                        maxOf(pagerState.currentPage - 1, 0)
+                    } else {
+                        pagerState.currentPage
+                    }
+                    val nextTab = tabPositions[nextTabIndex]
+                    val absFrac = abs(fraction)
+
+                    val targetLeft = currentTab.left + (nextTab.left - currentTab.left) * absFrac
+                    val targetWidth = currentTab.width + (nextTab.width - currentTab.width) * absFrac
+
+                    val animatedLeft by animateDpAsState(
+                        targetValue = targetLeft,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessLow
+                        ),
+                        label = "dayIndicatorLeft"
+                    )
+                    val animatedWidth by animateDpAsState(
+                        targetValue = targetWidth,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessLow
+                        ),
+                        label = "dayIndicatorWidth"
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .wrapContentSize(Alignment.CenterStart)
+                            .offset(x = animatedLeft)
+                            .width(animatedWidth)
+                            .fillMaxHeight()
+                            .padding(vertical = 7.dp, horizontal = 4.dp)
+                            .shadow(
+                                elevation = 8.dp,
+                                shape = RoundedCornerShape(18.dp),
+                                spotColor = Color(0xFF6366F1).copy(alpha = 0.55f),
+                                ambientColor = Color(0xFF8B5CF6).copy(alpha = 0.35f)
+                            )
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color(0xFF6366F1),
+                                        Color(0xFF7C3AED),
+                                        Color(0xFF8B5CF6)
+                                    )
+                                )
+                            )
+                            .zIndex(0f)
+                    )
+                }
+            }
+        ) {
+            weekDates.forEachIndexed { index, date ->
+                val isSelected = pagerState.currentPage == index
+                Tab(
+                    selected = isSelected,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        coroutineScope.launch { pagerState.animateScrollToPage(index) }
+                    },
+                    modifier = Modifier
+                        .height(78.dp)
+                        .zIndex(1f),
+                    selectedContentColor = Color.White,
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH),
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = date.dayOfMonth.toString(),
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 19.sp,
+                            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        if (date == today) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .graphicsLayer {
+                                        scaleX = pulseScale
+                                        scaleY = pulseScale
+                                        alpha = pulseAlpha
+                                    }
+                                    .clip(CircleShape)
+                                    .background(if (isSelected) Color.White else Color(0xFF6366F1))
+                            )
+                        } else {
+                            Box(modifier = Modifier.size(6.dp))
+                        }
+                    }
+                }
+            }
+        }
+
+        // Soft fade-out gradient at left edge
+        Box(modifier = Modifier.matchParentSize()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .width(20.dp)
+                    .fillMaxHeight()
+                    .background(
+                        Brush.horizontalGradient(
+                            colors = listOf(
+                                if (isDarkTheme) Color(0xFF1E1E24).copy(alpha = 0.95f) else Color(0xFFFFFFFF).copy(alpha = 0.95f),
+                                Color.Transparent
+                            )
+                        )
+                    )
+                    .zIndex(2f)
+            )
+        }
+
+        // Soft fade-out gradient at right edge
+        Box(modifier = Modifier.matchParentSize()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(20.dp)
+                    .fillMaxHeight()
+                    .background(
+                        Brush.horizontalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                if (isDarkTheme) Color(0xFF1E1E24).copy(alpha = 0.95f) else Color(0xFFFFFFFF).copy(alpha = 0.95f)
+                            )
+                        )
+                    )
+                    .zIndex(2f)
+            )
+        }
+    }
+}
+
+@Composable
+fun GlassLectureCard(
+    slot: ScheduleSlotEntity,
+    isLive: Boolean = false,
+    timeHint: String? = null,
+    onClick: () -> Unit
+) {
     val subjectColors = listOf(Color(0xFFE57373), Color(0xFF81C784), Color(0xFF64B5F6), Color(0xFFFFD54F), Color(0xFFBA68C8))
     
     val liveGreen = Color(0xFF4CAF50)
@@ -354,13 +649,19 @@ fun GlassLectureCard(slot: ScheduleSlotEntity, isLive: Boolean = false, onClick:
     val targetBgColor = if (isLive) liveGreen.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface
     val bgColor by animateColorAsState(targetBgColor, tween(500), label = "bgColor")
     
-    val targetBorderColor = if (isLive) liveGreen.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.15f)
+    val targetBorderColor = if (isLive) liveGreen.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.18f)
     val borderColor by animateColorAsState(targetBorderColor, tween(500), label = "borderColor")
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .bounceClick(onClick = onClick),
+            .shadow(
+                elevation = 6.dp,
+                shape = RoundedCornerShape(24.dp),
+                spotColor = if (isLive) liveGreen.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.16f),
+                ambientColor = Color.Black.copy(alpha = 0.08f)
+            )
+            .bounceClick(scaleDown = 0.97f, onClick = onClick),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = bgColor),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
@@ -474,7 +775,7 @@ fun GlassLectureCard(slot: ScheduleSlotEntity, isLive: Boolean = false, onClick:
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = if (isLive) liveGreen else MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.bounceClick {}
+                            modifier = Modifier.bounceClick(scaleDown = 0.95f) {}
                         ) {
                             Text(
                                 text = "${slot.startTime} - ${slot.endTime}",
@@ -484,8 +785,48 @@ fun GlassLectureCard(slot: ScheduleSlotEntity, isLive: Boolean = false, onClick:
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                             )
                         }
-                        
-                        if (isLive) {
+
+                        if (timeHint != null) {
+                            Spacer(modifier = Modifier.height(5.dp))
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isLive) liveGreen.copy(alpha = 0.14f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                                border = BorderStroke(1.dp, if (isLive) liveGreen.copy(alpha = 0.35f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.22f))
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                ) {
+                                    if (isLive) {
+                                        val infiniteTransition = rememberInfiniteTransition(label = "cardPulse")
+                                        val alpha by infiniteTransition.animateFloat(
+                                            initialValue = 0.3f, 
+                                            targetValue = 1f, 
+                                            animationSpec = infiniteRepeatable(
+                                                animation = tween(800), 
+                                                repeatMode = RepeatMode.Reverse
+                                            ), 
+                                            label = "pulseAlpha"
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(liveGreen.copy(alpha = alpha))
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                    }
+                                    Text(
+                                        text = timeHint,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        color = if (isLive) liveGreen else MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        } else if (isLive) {
                             Spacer(modifier = Modifier.height(6.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -804,4 +1145,24 @@ fun isSlotLive(slot: ScheduleSlotEntity, now: LocalTime): Boolean {
     val start = parseTimeSafely(slot.startTime) ?: return false
     val end = parseTimeSafely(slot.endTime) ?: return false
     return !now.isBefore(start) && now.isBefore(end)
+}
+
+fun getRelativeTimeHint(slot: ScheduleSlotEntity, now: LocalTime): String? {
+    val start = parseTimeSafely(slot.startTime) ?: return null
+    val end = parseTimeSafely(slot.endTime) ?: return null
+
+    if (!now.isBefore(start) && now.isBefore(end)) {
+        val minutesLeft = java.time.Duration.between(now, end).toMinutes()
+        return if (minutesLeft > 0) "In progress · ${minutesLeft}m left" else "In progress"
+    }
+
+    if (now.isBefore(start)) {
+        val minutesUntil = java.time.Duration.between(now, start).toMinutes()
+        return when {
+            minutesUntil in 1..60 -> "Starts in ${minutesUntil}m"
+            minutesUntil in 61..120 -> "Starts in ~1h"
+            else -> null
+        }
+    }
+    return null
 }
