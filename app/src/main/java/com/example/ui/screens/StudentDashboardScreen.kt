@@ -43,6 +43,9 @@ import androidx.navigation.NavController
 import com.example.data.CourseEntity
 import com.example.data.ScheduleSlotEntity
 import com.example.ui.components.FloatingGlassNavBar
+import com.example.ui.components.ScheduleBreakCard
+import com.example.ui.components.ScheduleTimelineItem
+import com.example.ui.components.buildChronologicalTimeline
 import com.example.ui.util.SoundFeedbackHelper
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
@@ -124,9 +127,10 @@ fun StudentDashboardContent(
     val coroutineScope = rememberCoroutineScope()
     var currentTab by remember { mutableIntStateOf(0) }
 
-    // Auto-sync from cloud if logged in
+    // Auto-sync from cloud and run auto-absence engine
     LaunchedEffect(Unit) {
         viewModel.syncDataFromFirebase()
+        viewModel.autoMarkPastClassesAsAbsent()
     }
 
     val allCourses by viewModel.getAllCourses().collectAsState(initial = emptyList())
@@ -139,6 +143,7 @@ fun StudentDashboardContent(
         val selfAttendance = allAttendance.filter { it.studentId == "self" }
         allCourses.associate { course ->
             val courseRecords = selfAttendance.filter {
+                (it.courseId == course.id) ||
                 allSlots.any { s -> s.courseId == course.id && s.id == it.scheduleSlotId } ||
                 it.scheduleSlotId.contains(course.id)
             }
@@ -210,10 +215,14 @@ fun StudentDashboardContent(
                         isLoading = false
                     }
 
-                    LaunchedEffect(scheduleSlots, isLoading) {
-                        if (!isLoading && scheduleSlots.isNotEmpty() && isTodayPage) {
-                            val liveIndex = scheduleSlots.indexOfFirst { slot ->
-                                isSlotLive(slot, LocalTime.now())
+                    val timelineItems = remember(scheduleSlots) {
+                        buildChronologicalTimeline(scheduleSlots)
+                    }
+
+                    LaunchedEffect(timelineItems, isLoading) {
+                        if (!isLoading && timelineItems.isNotEmpty() && isTodayPage) {
+                            val liveIndex = timelineItems.indexOfFirst { item ->
+                                item is ScheduleTimelineItem.SlotItem && isSlotLive(item.slot, LocalTime.now())
                             }
                             if (liveIndex >= 0) {
                                 delay(200)
@@ -234,7 +243,7 @@ fun StudentDashboardContent(
                             ) {
                                 items(3) { SkeletonCard() }
                             }
-                        } else if (scheduleSlots.isEmpty()) {
+                        } else if (timelineItems.isEmpty()) {
                             EmptyStudentScheduleIllustration(
                                 day = dayName,
                                 onImportAI = { navController.navigate("import_timetable") }
@@ -243,60 +252,81 @@ fun StudentDashboardContent(
                             LazyColumn(
                                 state = listState,
                                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 120.dp),
-                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
-                                itemsIndexed(scheduleSlots, key = { _, slot -> slot.id }) { index, slot ->
-                                    val isLive = isTodayPage && isSlotLive(slot, currentLiveTime)
-                                    val timeHint = if (isTodayPage) getRelativeTimeHint(slot, currentLiveTime) else null
-                                    val dateStr = pageDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
-
-                                    // Check if student already marked attendance for this slot on this date
-                                    val attendanceRecord = allAttendance.firstOrNull {
-                                        it.date == dateStr && it.scheduleSlotId == slot.id && it.studentId == "self"
+                                itemsIndexed(
+                                    items = timelineItems,
+                                    key = { _, item ->
+                                        when (item) {
+                                            is ScheduleTimelineItem.SlotItem -> item.slot.id
+                                            is ScheduleTimelineItem.BreakItem -> item.id
+                                        }
                                     }
-                                    val isMarkedPresent = attendanceRecord?.status?.equals("P", ignoreCase = true) == true ||
-                                            attendanceRecord?.status?.equals("present", ignoreCase = true) == true
-
-                                    val subjectStats = courseAttendanceMap[slot.courseId]
-
-                                    StaggeredAnimatedItem(index = index) {
-                                        StudentGlassLectureCard(
-                                            slot = slot,
-                                            course = courseMap[slot.courseId],
-                                            isLive = isLive,
-                                            isMarkedPresent = isMarkedPresent,
-                                            timeHint = timeHint,
-                                            subjectStats = subjectStats,
-                                            onMarkSelfAttendance = {
-                                                val ctx = context
-                                                if (isMarkedPresent) {
-                                                    // Undo / Unmark attendance if clicked again
-                                                    SoundFeedbackHelper.performSuccessHaptic(ctx)
-                                                    viewModel.deleteAttendance(
-                                                        date = dateStr,
-                                                        slotId = slot.id,
-                                                        studentId = "self"
-                                                    )
-                                                } else {
-                                                    // Mark attendance as Present
-                                                    SoundFeedbackHelper.playApplePaySuccessDing(ctx)
-                                                    SoundFeedbackHelper.performSuccessHaptic(ctx)
-                                                    viewModel.markSelfAttendance(
-                                                        date = dateStr,
-                                                        slotId = slot.id,
-                                                        courseId = slot.courseId,
-                                                        status = "P"
-                                                    )
-                                                }
-                                            },
-                                            onClick = {
-                                                if (slot.courseId.isNotBlank()) {
-                                                    navController.navigate("student_subject_detail/${slot.courseId}")
-                                                } else {
-                                                    navController.navigate("student_report")
-                                                }
+                                ) { index, item ->
+                                    when (item) {
+                                        is ScheduleTimelineItem.BreakItem -> {
+                                            StaggeredAnimatedItem(index = index) {
+                                                ScheduleBreakCard(breakItem = item)
                                             }
-                                        )
+                                        }
+                                        is ScheduleTimelineItem.SlotItem -> {
+                                            val slot = item.slot
+                                            val isLive = isTodayPage && isSlotLive(slot, currentLiveTime)
+                                            val timeHint = if (isTodayPage) getRelativeTimeHint(slot, currentLiveTime) else null
+                                            val dateStr = pageDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
+
+                                            // Check if student already marked attendance for this specific slot & course on this date
+                                            val attendanceRecord = allAttendance.firstOrNull {
+                                                it.date == dateStr && it.studentId == "self" && (
+                                                    it.scheduleSlotId == slot.id ||
+                                                    (it.courseId == slot.courseId && it.courseId.isNotBlank())
+                                                )
+                                            }
+                                            val isMarkedPresent = attendanceRecord?.status?.equals("P", ignoreCase = true) == true ||
+                                                    attendanceRecord?.status?.equals("present", ignoreCase = true) == true
+
+                                            val subjectStats = courseAttendanceMap[slot.courseId]
+
+                                            StaggeredAnimatedItem(index = index) {
+                                                StudentGlassLectureCard(
+                                                    slot = slot,
+                                                    course = courseMap[slot.courseId],
+                                                    isLive = isLive,
+                                                    isMarkedPresent = isMarkedPresent,
+                                                    timeHint = timeHint,
+                                                    subjectStats = subjectStats,
+                                                    onMarkSelfAttendance = {
+                                                        val ctx = context
+                                                        if (isMarkedPresent) {
+                                                            // Undo / Unmark attendance if clicked again
+                                                            SoundFeedbackHelper.performSuccessHaptic(ctx)
+                                                            viewModel.deleteSelfAttendance(
+                                                                date = dateStr,
+                                                                slotId = slot.id,
+                                                                courseId = slot.courseId
+                                                            )
+                                                        } else {
+                                                            // Mark attendance as Present
+                                                            SoundFeedbackHelper.playApplePaySuccessDing(ctx)
+                                                            SoundFeedbackHelper.performSuccessHaptic(ctx)
+                                                            viewModel.markSelfAttendance(
+                                                                date = dateStr,
+                                                                slotId = slot.id,
+                                                                courseId = slot.courseId,
+                                                                status = "P"
+                                                            )
+                                                        }
+                                                    },
+                                                    onClick = {
+                                                        if (slot.courseId.isNotBlank()) {
+                                                            navController.navigate("student_subject_detail/${slot.courseId}")
+                                                        } else {
+                                                            navController.navigate("student_report")
+                                                        }
+                                                    }
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }

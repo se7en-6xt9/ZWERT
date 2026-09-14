@@ -125,6 +125,9 @@ interface AppDao {
     @Query("DELETE FROM attendance WHERE date = :date AND scheduleSlotId = :scheduleSlotId AND studentId = :studentId")
     suspend fun deleteAttendance(date: String, scheduleSlotId: String, studentId: String)
 
+    @Query("DELETE FROM attendance WHERE date = :date AND studentId = :studentId AND (courseId = :courseId OR scheduleSlotId = :scheduleSlotId OR scheduleSlotId = 'slot_' || :courseId OR scheduleSlotId = 'slot_self_' || :courseId)")
+    suspend fun deleteStudentAttendanceForCourseDate(date: String, scheduleSlotId: String, courseId: String, studentId: String = "self")
+
     @Query("DELETE FROM attendance WHERE courseId = :courseId")
     suspend fun deleteAttendanceByCourse(courseId: String)
 
@@ -151,6 +154,9 @@ interface AppDao {
 
     @Query("SELECT * FROM attendance")
     fun getAllAttendance(): Flow<List<AttendanceRecordEntity>>
+
+    @Query("SELECT * FROM attendance")
+    suspend fun getAllAttendanceSync(): List<AttendanceRecordEntity>
 
     @Query("SELECT COUNT(*) FROM attendance WHERE courseId = :courseId")
     fun getAttendanceCountForCourse(courseId: String): Flow<Int>

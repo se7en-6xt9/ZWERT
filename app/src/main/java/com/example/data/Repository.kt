@@ -127,6 +127,7 @@ class Repository(val dao: AppDao) {
     fun getAttendanceForStudent(studentId: String) = dao.getAttendanceForStudent(studentId)
     fun getAttendanceForStudentInCourse(studentId: String, courseId: String) = dao.getAttendanceForStudentInCourse(studentId, courseId)
     fun getAllAttendance() = dao.getAllAttendance()
+    suspend fun getAllAttendanceSync() = withContext(Dispatchers.IO) { dao.getAllAttendanceSync() }
     fun getAttendanceCountForCourse(courseId: String) = dao.getAttendanceCountForCourse(courseId)
     fun getDistinctAttendanceDatesForCourse(courseId: String) = dao.getDistinctAttendanceDatesForCourse(courseId)
     fun getAttendanceForDateRange(courseId: String, startDate: String, endDate: String) = dao.getAttendanceForDateRange(courseId, startDate, endDate)
@@ -135,6 +136,9 @@ class Repository(val dao: AppDao) {
     }
     suspend fun deleteAttendance(date: String, scheduleSlotId: String, studentId: String) = withContext(Dispatchers.IO) {
         dao.deleteAttendance(date, scheduleSlotId, studentId)
+    }
+    suspend fun deleteStudentAttendanceForCourseDate(date: String, scheduleSlotId: String, courseId: String, studentId: String = "self") = withContext(Dispatchers.IO) {
+        dao.deleteStudentAttendanceForCourseDate(date, scheduleSlotId, courseId, studentId)
     }
     suspend fun deleteAttendanceByCourse(courseId: String) = withContext(Dispatchers.IO) {
         dao.deleteAttendanceByCourse(courseId)

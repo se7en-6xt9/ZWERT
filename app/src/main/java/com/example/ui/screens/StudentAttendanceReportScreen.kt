@@ -68,14 +68,15 @@ fun StudentAttendanceReportScreen(
     var allSlots by remember { mutableStateOf<List<ScheduleSlotEntity>>(emptyList()) }
     LaunchedEffect(Unit) {
         allSlots = viewModel.getAllScheduleSlotsSync()
+        viewModel.autoMarkPastClassesAsAbsent()
     }
 
     var searchQuery by remember { mutableStateOf("") }
     var showSearchBar by remember { mutableStateOf(false) }
 
-    // Dynamic bidirectional infinite scroll range state
-    var pastDaysCount by remember { mutableIntStateOf(60) }
-    var futureDaysCount by remember { mutableIntStateOf(30) }
+    // Dynamic bidirectional infinite scroll range state (15 days window)
+    var pastDaysCount by remember { mutableIntStateOf(15) }
+    var futureDaysCount by remember { mutableIntStateOf(15) }
 
     val filteredCourses = remember(courses, searchQuery) {
         if (searchQuery.isBlank()) courses
@@ -85,14 +86,73 @@ fun StudentAttendanceReportScreen(
         }
     }
 
-    // Generate date columns from past to future
+    // Generate and precompute date columns from past to future
     val today = remember { LocalDate.now() }
-    val generatedDates = remember(pastDaysCount, futureDaysCount) {
-        val list = mutableListOf<LocalDate>()
+    val studentDateCols = remember(pastDaysCount, futureDaysCount) {
+        val list = ArrayList<StudentDateCol>(pastDaysCount + futureDaysCount + 1)
+        val todayDate = LocalDate.now()
         for (i in -pastDaysCount.toLong()..futureDaysCount.toLong()) {
-            list.add(today.plusDays(i))
+            val d = todayDate.plusDays(i)
+            list.add(
+                StudentDateCol(
+                    date = d,
+                    dateStr = d.format(DateTimeFormatter.ISO_LOCAL_DATE),
+                    isToday = d == todayDate,
+                    dayName = d.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH),
+                    monthName = d.month.getDisplayName(TextStyle.SHORT, Locale.ENGLISH),
+                    dayOfMonthStr = d.dayOfMonth.toString(),
+                    dayOfWeekFull = d.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH).lowercase(),
+                    dayOfWeekShort = d.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).lowercase()
+                )
+            )
         }
         list
+    }
+
+    // Precompute attendance lookup map for O(1) instant cell access (strictly course & slot keyed)
+    val attendanceStatusMap = remember(allAttendance) {
+        val map = HashMap<String, String>(allAttendance.size * 2 + 16)
+        for (rec in allAttendance) {
+            if (rec.studentId == "self") {
+                val status = rec.status.uppercase()
+                if (rec.scheduleSlotId.isNotBlank()) {
+                    map["${rec.date}_${rec.scheduleSlotId}"] = status
+                }
+                if (rec.courseId.isNotBlank()) {
+                    map["${rec.date}_${rec.courseId}"] = status
+                }
+            }
+        }
+        map
+    }
+
+    // Precompute slots map per course
+    val courseSlotsMap = remember(allSlots, courses) {
+        courses.associate { course ->
+            val slots = allSlots.filter { it.courseId == course.id }
+            val dayMap = slots.groupBy { it.dayOfWeek.trim().lowercase() }
+            course.id to (slots to dayMap)
+        }
+    }
+
+    // Precompute stats per course
+    val courseStatsMap = remember(allAttendance, courses, allSlots) {
+        val map = HashMap<String, Pair<Int, Int>>(courses.size + 8)
+        val selfRecords = allAttendance.filter { it.studentId == "self" }
+        for (c in courses) {
+            val courseSlotIds = allSlots.filter { it.courseId == c.id }.map { it.id }.toSet()
+            val cRecords = selfRecords.filter {
+                (it.courseId == c.id) ||
+                (it.scheduleSlotId.isNotBlank() && courseSlotIds.contains(it.scheduleSlotId)) ||
+                it.scheduleSlotId.contains(c.id)
+            }
+            val pCount = cRecords.count {
+                it.status.equals("P", true) || it.status.equals("PRESENT", true) ||
+                it.status.equals("L", true) || it.status.equals("LATE", true)
+            }
+            map[c.id] = Pair(pCount, cRecords.size)
+        }
+        map
     }
 
     // Grid Dimensions
@@ -108,9 +168,9 @@ fun StudentAttendanceReportScreen(
 
     // Scroll to today on first appearance
     var hasScrolledToToday by remember { mutableStateOf(false) }
-    LaunchedEffect(generatedDates) {
-        if (!hasScrolledToToday && generatedDates.isNotEmpty()) {
-            val todayIdx = generatedDates.indexOf(today)
+    LaunchedEffect(studentDateCols) {
+        if (!hasScrolledToToday && studentDateCols.isNotEmpty()) {
+            val todayIdx = studentDateCols.indexOfFirst { it.isToday }
             if (todayIdx >= 0) {
                 hScroll.scrollTo((todayIdx * cellWidthPx).toInt())
                 hasScrolledToToday = true
@@ -118,13 +178,13 @@ fun StudentAttendanceReportScreen(
         }
     }
 
-    // Load more dates dynamically when reaching scroll bounds
+    // Load more dates dynamically in 15-day chunks when reaching scroll bounds
     LaunchedEffect(hScroll.value, hScroll.maxValue) {
         if (hScroll.maxValue > 0 && hScroll.value >= hScroll.maxValue - 200) {
-            futureDaysCount += 30
+            futureDaysCount += 15
         }
         if (hScroll.value <= 100 && pastDaysCount < 180) {
-            pastDaysCount += 30
+            pastDaysCount += 15
         }
     }
 
@@ -212,7 +272,7 @@ fun StudentAttendanceReportScreen(
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 coroutineScope.launch {
-                                    val todayIdx = generatedDates.indexOf(today)
+                                    val todayIdx = studentDateCols.indexOfFirst { it.isToday }
                                     if (todayIdx >= 0) {
                                         hScroll.animateScrollTo((todayIdx * cellWidthPx).toInt())
                                     }
@@ -576,8 +636,7 @@ fun StudentAttendanceReportScreen(
                     ) {
                         Column {
                             filteredCourses.forEachIndexed { courseIndex, course ->
-                                val courseSlots = allSlots.filter { it.courseId == course.id }
-                                val slotDayMap = courseSlots.groupBy { it.dayOfWeek.trim().lowercase() }
+                                val (courseSlots, slotDayMap) = courseSlotsMap[course.id] ?: (emptyList<ScheduleSlotEntity>() to emptyMap<String, List<ScheduleSlotEntity>>())
 
                                 Row(
                                     modifier = Modifier
@@ -587,23 +646,17 @@ fun StudentAttendanceReportScreen(
                                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
                                         )
                                 ) {
-                                    generatedDates.forEach { date ->
-                                        val fullDay = date.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH).lowercase()
-                                        val shortDay = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).lowercase()
-                                        val matchingSlots = slotDayMap[fullDay] ?: slotDayMap[shortDay] ?: emptyList()
+                                    studentDateCols.forEach { col ->
+                                        val matchingSlots = slotDayMap[col.dayOfWeekFull] ?: slotDayMap[col.dayOfWeekShort] ?: emptyList()
                                         val hasSlot = matchingSlots.isNotEmpty()
                                         val activeSlot = matchingSlots.firstOrNull()
 
-                                        val dateStr = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
-                                        // Look up attendance record for this date and course/slot
-                                        val record = allAttendance.firstOrNull {
-                                            it.date == dateStr &&
-                                            (it.studentId == "self") &&
-                                            (activeSlot == null || it.scheduleSlotId == activeSlot.id)
-                                        }
+                                        // Exact status lookup for THIS specific course and slot
+                                        val status = matchingSlots.firstNotNullOfOrNull { slot ->
+                                            attendanceStatusMap["${col.dateStr}_${slot.id}"]
+                                        } ?: attendanceStatusMap["${col.dateStr}_${course.id}"]
 
-                                        val status = record?.status?.uppercase()
-                                        val isToday = date == today
+                                        val isToday = col.isToday
 
                                         Box(
                                             modifier = Modifier
@@ -621,7 +674,7 @@ fun StudentAttendanceReportScreen(
                                                 .clickable(enabled = hasSlot || true) {
                                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                                     // Toggle or open cell session
-                                                    selectedCellSession = Triple(course, date, activeSlot)
+                                                    selectedCellSession = Triple(course, col.date, activeSlot)
                                                 },
                                             contentAlignment = Alignment.Center
                                         ) {
@@ -647,7 +700,7 @@ fun StudentAttendanceReportScreen(
                                                                     listOf(Color.White.copy(alpha = 0.55f), Color.White.copy(alpha = 0.15f))
                                                                 ),
                                                                 shape = RoundedCornerShape(10.dp)
-                                                            ),
+                                                             ),
                                                         contentAlignment = Alignment.Center
                                                     ) {
                                                         Text(
@@ -778,10 +831,8 @@ fun StudentAttendanceReportScreen(
                             modifier = Modifier.fillMaxHeight(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            generatedDates.forEachIndexed { dateIdx, date ->
-                                val isToday = date == today
-                                val dayName = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH)
-                                val monthName = date.month.getDisplayName(TextStyle.SHORT, Locale.ENGLISH)
+                            studentDateCols.forEachIndexed { dateIdx, col ->
+                                val isToday = col.isToday
 
                                 val interactionSource = remember { MutableInteractionSource() }
                                 val isPressed by interactionSource.collectIsPressedAsState()
@@ -851,20 +902,20 @@ fun StudentAttendanceReportScreen(
                                         verticalArrangement = Arrangement.Center
                                     ) {
                                         Text(
-                                            text = dayName,
+                                            text = col.dayName,
                                             fontWeight = if (isToday) FontWeight.ExtraBold else FontWeight.SemiBold,
                                             fontSize = 11.sp,
                                             color = if (isToday) Color.White.copy(alpha = 0.85f) else Color(0xFF64748B)
                                         )
                                         Spacer(modifier = Modifier.height(2.dp))
                                         Text(
-                                            text = date.dayOfMonth.toString(),
+                                            text = col.dayOfMonthStr,
                                             fontWeight = FontWeight.Black,
                                             fontSize = 16.sp,
                                             color = if (isToday) Color.White else MaterialTheme.colorScheme.onSurface
                                         )
                                         Text(
-                                            text = monthName,
+                                            text = col.monthName,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Medium,
                                             color = if (isToday) Color.White.copy(alpha = 0.75f) else Color(0xFF94A3B8)
@@ -896,14 +947,7 @@ fun StudentAttendanceReportScreen(
                     ) {
                         Column {
                             filteredCourses.forEachIndexed { index, course ->
-                                val courseAttendance = allAttendance.filter {
-                                    it.studentId == "self" && (
-                                        allSlots.any { s -> s.courseId == course.id && s.id == it.scheduleSlotId } ||
-                                        it.scheduleSlotId.contains(course.id)
-                                    )
-                                }
-                                val presentCount = courseAttendance.count { it.status.equals("P", ignoreCase = true) || it.status.equals("present", ignoreCase = true) }
-                                val totalCount = courseAttendance.size
+                                val (presentCount, totalCount) = courseStatsMap[course.id] ?: Pair(0, 0)
                                 val coursePct = if (totalCount > 0) (presentCount * 100f) / totalCount else 0f
                                 val statusColor = when {
                                     totalCount == 0 -> Color(0xFF64748B)
@@ -1148,9 +1192,13 @@ fun StudentAttendanceReportScreen(
         val dateStr = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
         val slotId = slot?.id ?: "slot_self_${course.id}"
         val record = allAttendance.firstOrNull {
-            it.date == dateStr && it.studentId == "self" && (slot == null || it.scheduleSlotId == slot.id)
+            it.date == dateStr && it.studentId == "self" && (
+                (slot != null && it.scheduleSlotId == slot.id) ||
+                it.courseId == course.id ||
+                it.scheduleSlotId.contains(course.id)
+            )
         }
-        val currentStatus = record?.status ?: "NONE"
+        val currentStatus = record?.status?.uppercase() ?: "NONE"
 
         AlertDialog(
             onDismissRequest = { selectedCellSession = null },
@@ -1159,7 +1207,7 @@ fun StudentAttendanceReportScreen(
                     Text(course.name, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "${date.format(DateTimeFormatter.ofPattern("EEEE, dd MMM yyyy"))} • ${slot?.startTime ?: "Class"}",
+                        text = "${date.format(DateTimeFormatter.ofPattern("EEEE, dd MMM yyyy"))} • ${slot?.startTime ?: "Scheduled Session"}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1168,9 +1216,10 @@ fun StudentAttendanceReportScreen(
             text = {
                 Column {
                     Text(
-                        text = "Change attendance status for this session:",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "Current Status: ${if (currentStatus == "P") "Present (P)" else if (currentStatus == "A") "Absent (A)" else "Not Marked"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (currentStatus == "P") Color(0xFF10B981) else if (currentStatus == "A") Color(0xFFEF4444) else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(16.dp))
 
@@ -1218,13 +1267,13 @@ fun StudentAttendanceReportScreen(
                     OutlinedButton(
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            viewModel.deleteAttendance(dateStr, slotId, "self")
+                            viewModel.deleteSelfAttendance(dateStr, slotId, course.id)
                             selectedCellSession = null
                         },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Text("Clear Status", color = MaterialTheme.colorScheme.onSurface)
+                        Text("Clear / Unmark Status", color = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             },
@@ -1251,7 +1300,7 @@ fun StudentAttendanceReportScreen(
                                 .atZone(ZoneId.systemDefault())
                                 .toLocalDate()
                             coroutineScope.launch {
-                                val targetIdx = generatedDates.indexOf(pickedDate)
+                                val targetIdx = studentDateCols.indexOfFirst { it.date == pickedDate }
                                 if (targetIdx >= 0) {
                                     hScroll.animateScrollTo((targetIdx * cellWidthPx).toInt())
                                 } else {
@@ -1279,3 +1328,14 @@ fun StudentAttendanceReportScreen(
         }
     }
 }
+
+data class StudentDateCol(
+    val date: LocalDate,
+    val dateStr: String,
+    val isToday: Boolean,
+    val dayName: String,
+    val monthName: String,
+    val dayOfMonthStr: String,
+    val dayOfWeekFull: String,
+    val dayOfWeekShort: String
+)

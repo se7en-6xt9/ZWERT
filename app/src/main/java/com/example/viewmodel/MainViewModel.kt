@@ -36,6 +36,11 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import java.time.LocalDate
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeFormatterBuilder
+import java.time.format.TextStyle
+import java.util.Locale
 import java.io.File
 import com.example.util.ExportOptions
 import com.example.util.ExportFormat
@@ -2053,6 +2058,122 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getAllAttendance() = repository.getAllAttendance()
 
+    private fun parseTimeSafelyVM(timeStr: String): LocalTime? {
+        val cleanStr = timeStr.trim().uppercase()
+        return try {
+            if (cleanStr.contains("AM") || cleanStr.contains("PM")) {
+                val formatter = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)
+                LocalTime.parse(cleanStr, formatter)
+            } else {
+                val parts = cleanStr.split(":")
+                val h = parts[0].toInt()
+                val m = parts[1].take(2).toInt()
+                LocalTime.of(h, m)
+            }
+        } catch (e: Exception) {
+            try {
+                val formatter2 = DateTimeFormatterBuilder()
+                    .parseCaseInsensitive()
+                    .appendPattern("[hh:mm a][h:mm a][HH:mm][H:mm]")
+                    .toFormatter(Locale.ENGLISH)
+                LocalTime.parse(cleanStr, formatter2)
+            } catch (e2: Exception) {
+                null
+            }
+        }
+    }
+
+    /**
+     * Automatic Absence Engine:
+     * If a scheduled class finished (class endTime + 5 minutes has passed) and student has not
+     * marked present or any attendance, automatically records status as "A" (Absent).
+     * Also checks past 7 scheduled days so missed sessions are correctly counted in eligibility stats.
+     */
+    fun autoMarkPastClassesAsAbsent() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val now = LocalTime.now()
+                val today = LocalDate.now()
+                val todayStr = today.format(DateTimeFormatter.ISO_LOCAL_DATE)
+                val dayOfWeekName = today.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH)
+                val dayOfWeekShort = today.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH)
+
+                val allSlots = repository.getAllScheduleSlotsSync()
+                val allAttendance = repository.getAllAttendanceSync()
+                val uid = currentActiveUserId
+
+                // 1. Check Today's Scheduled Slots
+                val todaySlots = allSlots.filter { slot ->
+                    slot.dayOfWeek.equals(dayOfWeekName, ignoreCase = true) ||
+                    slot.dayOfWeek.equals(dayOfWeekShort, ignoreCase = true)
+                }
+
+                for (slot in todaySlots) {
+                    val endTime = parseTimeSafelyVM(slot.endTime)
+                    if (endTime != null) {
+                        val autoAbsentDeadline = endTime.plusMinutes(5)
+                        if (now.isAfter(autoAbsentDeadline)) {
+                            val hasExistingRecord = allAttendance.any {
+                                it.date == todayStr && it.studentId == "self" && (
+                                    it.scheduleSlotId == slot.id ||
+                                    (it.courseId.isNotBlank() && it.courseId == slot.courseId)
+                                )
+                            }
+                            if (!hasExistingRecord) {
+                                val absentRecord = AttendanceRecordEntity(
+                                    date = todayStr,
+                                    scheduleSlotId = slot.id,
+                                    studentId = "self",
+                                    status = "A",
+                                    courseId = slot.courseId,
+                                    userId = uid,
+                                    markedAt = System.currentTimeMillis()
+                                )
+                                repository.saveAttendance(absentRecord)
+                            }
+                        }
+                    }
+                }
+
+                // 2. Check Past 7 Days
+                for (daysAgo in 1..7) {
+                    val pastDate = today.minusDays(daysAgo.toLong())
+                    val pastDateStr = pastDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
+                    val pastDayFull = pastDate.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH)
+                    val pastDayShort = pastDate.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH)
+
+                    val pastSlots = allSlots.filter { slot ->
+                        slot.dayOfWeek.equals(pastDayFull, ignoreCase = true) ||
+                        slot.dayOfWeek.equals(pastDayShort, ignoreCase = true)
+                    }
+
+                    for (slot in pastSlots) {
+                        val hasExistingRecord = allAttendance.any {
+                            it.date == pastDateStr && it.studentId == "self" && (
+                                it.scheduleSlotId == slot.id ||
+                                (it.courseId.isNotBlank() && it.courseId == slot.courseId)
+                            )
+                        }
+                        if (!hasExistingRecord) {
+                            val absentRecord = AttendanceRecordEntity(
+                                date = pastDateStr,
+                                scheduleSlotId = slot.id,
+                                studentId = "self",
+                                status = "A",
+                                courseId = slot.courseId,
+                                userId = uid,
+                                markedAt = System.currentTimeMillis()
+                            )
+                            repository.saveAttendance(absentRecord)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("AutoAbsent", "Auto absence scan completed with note: ${e.message}")
+            }
+        }
+    }
+
     fun markSelfAttendance(
         date: String,
         slotId: String,
@@ -2064,6 +2185,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val uid = currentActiveUserId
+                // 1. First remove any prior self-attendance for this specific date and course/slot
+                repository.deleteStudentAttendanceForCourseDate(date, slotId, courseId, "self")
+
                 val record = AttendanceRecordEntity(
                     date = date,
                     scheduleSlotId = slotId,
@@ -2073,11 +2197,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     userId = uid,
                     markedAt = System.currentTimeMillis()
                 )
-                // 1. Immediately save to Room DB so Sheet and Dashboards update instantly!
+                // 2. Immediately save to Room DB so Sheet and Dashboards update instantly!
                 repository.saveAttendance(record)
                 onSuccess()
 
-                // 2. Push to SyncEngine and Firestore
+                // 3. Push to SyncEngine and Firestore
                 syncEngine.queueAttendanceOffline(record)
                 val authUid = auth?.currentUser?.uid
                 val db = firestore
@@ -2131,6 +2255,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val uid = currentActiveUserId
+                // First remove any existing record for this date and course/slot
+                repository.deleteStudentAttendanceForCourseDate(date, slotId, courseId, "self")
+
                 val record = AttendanceRecordEntity(
                     date = date,
                     scheduleSlotId = slotId,
@@ -2180,6 +2307,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Throwable) {
                 Log.e("AttendanceCorrection", "Failed to update attendance status", e)
                 onError(e.message ?: "Failed to update attendance")
+            }
+        }
+    }
+
+    fun deleteSelfAttendance(
+        date: String,
+        slotId: String,
+        courseId: String,
+        onSuccess: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                repository.deleteStudentAttendanceForCourseDate(date, slotId, courseId, "self")
+                onSuccess()
+
+                val uid = auth?.currentUser?.uid
+                val db = firestore
+                if (uid != null && db != null) {
+                    val sessionId = "${date}_$slotId"
+                    try {
+                        db.collection("users").document(uid)
+                            .collection("attendance_records").document("${sessionId}_self")
+                            .delete()
+                    } catch (_: Exception) {}
+
+                    if (courseId.isNotBlank()) {
+                        try {
+                            db.collection("users").document(uid)
+                                .collection("batches").document(courseId)
+                                .collection("attendance").document("${sessionId}_self")
+                                .delete()
+                        } catch (_: Exception) {}
+                    }
+                }
+                triggerCelebration("Status Cleared ✓")
+            } catch (e: Exception) {
+                Log.e("Attendance", "Failed to delete self attendance: ${e.message}")
             }
         }
     }

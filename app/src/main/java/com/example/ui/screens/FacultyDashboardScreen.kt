@@ -46,6 +46,10 @@ import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
 import com.example.data.CourseEntity
 import com.example.data.ScheduleSlotEntity
+import com.example.ui.components.FloatingGlassNavBar
+import com.example.ui.components.ScheduleBreakCard
+import com.example.ui.components.ScheduleTimelineItem
+import com.example.ui.components.buildChronologicalTimeline
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -196,10 +200,14 @@ fun DashboardContent(
                         isLoading = false
                     }
 
-                    LaunchedEffect(scheduleSlots, isLoading) {
-                        if (!isLoading && scheduleSlots.isNotEmpty() && isTodayPage) {
-                            val liveIndex = scheduleSlots.indexOfFirst { slot ->
-                                isSlotLive(slot, LocalTime.now())
+                    val timelineItems = remember(scheduleSlots) {
+                        buildChronologicalTimeline(scheduleSlots)
+                    }
+
+                    LaunchedEffect(timelineItems, isLoading) {
+                        if (!isLoading && timelineItems.isNotEmpty() && isTodayPage) {
+                            val liveIndex = timelineItems.indexOfFirst { item ->
+                                item is ScheduleTimelineItem.SlotItem && isSlotLive(item.slot, LocalTime.now())
                             }
                             if (liveIndex >= 0) {
                                 delay(200)
@@ -220,25 +228,43 @@ fun DashboardContent(
                             ) {
                                 items(3) { SkeletonCard() }
                             }
-                        } else if (scheduleSlots.isEmpty()) {
+                        } else if (timelineItems.isEmpty()) {
                             EmptyStateIllustration(dayName)
                         } else {
                             LazyColumn(
                                 state = listState,
                                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 120.dp),
-                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
-                                itemsIndexed(scheduleSlots, key = { _, slot -> slot.id }) { index, slot ->
-                                    val isLive = isTodayPage && isSlotLive(slot, currentLiveTime)
-                                    val timeHint = if (isTodayPage) getRelativeTimeHint(slot, currentLiveTime) else null
-                                    StaggeredAnimatedItem(index = index) {
-                                        GlassLectureCard(
-                                            slot = slot,
-                                            course = courseMap[slot.courseId],
-                                            isLive = isLive,
-                                            timeHint = timeHint,
-                                            onClick = { navController.navigate("lecture_view/${slot.id}") }
-                                        )
+                                itemsIndexed(
+                                    items = timelineItems,
+                                    key = { _, item ->
+                                        when (item) {
+                                            is ScheduleTimelineItem.SlotItem -> item.slot.id
+                                            is ScheduleTimelineItem.BreakItem -> item.id
+                                        }
+                                    }
+                                ) { index, item ->
+                                    when (item) {
+                                        is ScheduleTimelineItem.BreakItem -> {
+                                            StaggeredAnimatedItem(index = index) {
+                                                ScheduleBreakCard(breakItem = item)
+                                            }
+                                        }
+                                        is ScheduleTimelineItem.SlotItem -> {
+                                            val slot = item.slot
+                                            val isLive = isTodayPage && isSlotLive(slot, currentLiveTime)
+                                            val timeHint = if (isTodayPage) getRelativeTimeHint(slot, currentLiveTime) else null
+                                            StaggeredAnimatedItem(index = index) {
+                                                GlassLectureCard(
+                                                    slot = slot,
+                                                    course = courseMap[slot.courseId],
+                                                    isLive = isLive,
+                                                    timeHint = timeHint,
+                                                    onClick = { navController.navigate("lecture_view/${slot.id}") }
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }

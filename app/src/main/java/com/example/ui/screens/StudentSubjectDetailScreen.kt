@@ -521,10 +521,10 @@ fun StudentSubjectDetailScreen(
             dismissButton = {
                 TextButton(
                     onClick = {
-                        viewModel.deleteAttendance(
+                        viewModel.deleteSelfAttendance(
                             date = record.date,
                             slotId = record.scheduleSlotId,
-                            studentId = "self"
+                            courseId = courseId
                         )
                         recordToEdit = null
                     }
