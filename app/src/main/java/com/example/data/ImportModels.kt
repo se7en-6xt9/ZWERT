@@ -5,7 +5,9 @@ import com.squareup.moshi.JsonClass
 @JsonClass(generateAdapter = true)
 data class ImportTimetableData(
     val teacher: TeacherImport? = null,
-    val batches: List<BatchImport>? = null
+    val batches: List<BatchImport>? = null,
+    val missingFields: List<String>? = null,
+    val summary: String? = null
 )
 
 @JsonClass(generateAdapter = true)

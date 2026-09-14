@@ -150,12 +150,20 @@ fun DashboardContent(
                     accentColor = accentColor
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                // Auto-sync from cloud if logged in
-                LaunchedEffect(Unit) {
-                    viewModel.syncDataFromFirebase()
-                }
+                val isSyncing by viewModel.isSyncing.collectAsState()
+                val syncProgress by viewModel.syncProgress.collectAsState()
+                val showCelebration by viewModel.showCelebration.collectAsState()
+                val syncStatusText by viewModel.syncStatusText.collectAsState()
+
+                CloudSyncFeedbackBanner(
+                    isSyncing = isSyncing,
+                    syncProgress = syncProgress,
+                    showCelebration = showCelebration,
+                    syncStatusText = syncStatusText,
+                    accentColor = accentColor
+                )
 
                 val allCourses by viewModel.getAllCourses().collectAsState(initial = emptyList())
                 val courseMap = remember(allCourses) { allCourses.associateBy { it.id } }
@@ -1235,4 +1243,94 @@ fun getRelativeTimeHint(slot: ScheduleSlotEntity, now: LocalTime): String? {
         }
     }
     return null
+}
+
+@Composable
+fun CloudSyncFeedbackBanner(
+    isSyncing: Boolean,
+    syncProgress: Float,
+    showCelebration: Boolean,
+    syncStatusText: String,
+    accentColor: Color
+) {
+    AnimatedVisibility(
+        visible = isSyncing || showCelebration,
+        enter = fadeIn() + expandVertically(),
+        exit = fadeOut() + shrinkVertically()
+    ) {
+        val animatedProgress by animateFloatAsState(
+            targetValue = if (showCelebration) 1f else syncProgress.coerceIn(0.1f, 1f),
+            label = "syncProgress"
+        )
+
+        Card(
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (showCelebration) Color(0xFF10B981).copy(alpha = 0.12f)
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+            ),
+            border = BorderStroke(
+                width = 1.dp,
+                color = if (showCelebration) Color(0xFF10B981).copy(alpha = 0.4f)
+                else accentColor.copy(alpha = 0.25f)
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = if (showCelebration) "🎉" else "☁️",
+                            fontSize = 16.sp
+                        )
+                        Text(
+                            text = syncStatusText,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp
+                            ),
+                            color = if (showCelebration) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Text(
+                        text = if (showCelebration) "100%" else "${(animatedProgress * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        ),
+                        color = if (showCelebration) Color(0xFF10B981) else accentColor
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                LinearProgressIndicator(
+                    progress = { animatedProgress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(5.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = if (showCelebration) Color(0xFF10B981) else accentColor,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            }
+        }
+    }
 }

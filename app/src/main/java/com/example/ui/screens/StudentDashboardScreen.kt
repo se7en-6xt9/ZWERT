@@ -235,7 +235,10 @@ fun StudentDashboardContent(
                                 items(3) { SkeletonCard() }
                             }
                         } else if (scheduleSlots.isEmpty()) {
-                            EmptyStudentScheduleIllustration(dayName)
+                            EmptyStudentScheduleIllustration(
+                                day = dayName,
+                                onImportAI = { navController.navigate("import_timetable") }
+                            )
                         } else {
                             LazyColumn(
                                 state = listState,
@@ -307,7 +310,7 @@ fun StudentDashboardContent(
                 selectedTabIndex = currentTab,
                 onTabSelected = { currentTab = it },
                 onNavigateSchedule = { currentTab = 0 },
-                onNavigateAIImport = { navController.navigate("student_report") },
+                onNavigateAIImport = { navController.navigate("import_timetable") },
                 onNavigateAddClass = { navController.navigate("add_edit_batch") },
                 onNavigateManageClasses = { navController.navigate("manage_classes") },
                 onNavigateProfile = { navController.navigate("profile") },
@@ -1117,7 +1120,10 @@ fun StudentSelfAttendanceButton(
 }
 
 @Composable
-fun EmptyStudentScheduleIllustration(day: String) {
+fun EmptyStudentScheduleIllustration(
+    day: String,
+    onImportAI: () -> Unit = {}
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1148,10 +1154,19 @@ fun EmptyStudentScheduleIllustration(day: String) {
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "You don't have any scheduled sessions for this day. Check upcoming days or view your full attendance register.",
+            text = "You don't have any scheduled sessions for this day. Import your routine with AI or check upcoming days.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
+        Spacer(modifier = Modifier.height(20.dp))
+        FilledTonalButton(
+            onClick = onImportAI,
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Import Timetable with AI", fontWeight = FontWeight.SemiBold)
+        }
     }
 }

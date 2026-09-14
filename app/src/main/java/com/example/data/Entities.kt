@@ -1,6 +1,7 @@
 package com.example.data
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
@@ -16,7 +17,14 @@ enum class SyncStatus {
 /**
  * Multi-tenant Course entity linked to a specific authenticated teacher or tenant.
  */
-@Entity(tableName = "courses")
+@Entity(
+    tableName = "courses",
+    indices = [
+        Index(value = ["teacherId"]),
+        Index(value = ["code"]),
+        Index(value = ["syncStatus"])
+    ]
+)
 data class CourseEntity(
     @PrimaryKey val id: String,
     val name: String,
@@ -34,7 +42,15 @@ data class CourseEntity(
 /**
  * Student enrolled in a batch or course.
  */
-@Entity(tableName = "students")
+@Entity(
+    tableName = "students",
+    indices = [
+        Index(value = ["courseId"]),
+        Index(value = ["rollNumber"]),
+        Index(value = ["name"]),
+        Index(value = ["syncStatus"])
+    ]
+)
 data class StudentEntity(
     @PrimaryKey val id: String,
     val name: String,
@@ -49,7 +65,14 @@ data class StudentEntity(
 /**
  * Weekly lecture or practical schedule slot.
  */
-@Entity(tableName = "schedule_slots")
+@Entity(
+    tableName = "schedule_slots",
+    indices = [
+        Index(value = ["courseId"]),
+        Index(value = ["dayOfWeek"]),
+        Index(value = ["syncStatus"])
+    ]
+)
 data class ScheduleSlotEntity(
     @PrimaryKey val id: String,
     val courseId: String,
@@ -67,7 +90,19 @@ data class ScheduleSlotEntity(
 /**
  * Individual attendance event with multi-device sync audit and status.
  */
-@Entity(tableName = "attendance")
+@Entity(
+    tableName = "attendance",
+    indices = [
+        Index(value = ["courseId"]),
+        Index(value = ["scheduleSlotId"]),
+        Index(value = ["studentId"]),
+        Index(value = ["date"]),
+        Index(value = ["date", "scheduleSlotId"]),
+        Index(value = ["studentId", "courseId"]),
+        Index(value = ["date", "scheduleSlotId", "studentId"]),
+        Index(value = ["syncStatus"])
+    ]
+)
 data class AttendanceRecordEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val date: String = "", // e.g., "YYYY-MM-DD"

@@ -72,11 +72,74 @@ class Repository(val dao: AppDao) {
     suspend fun getScheduleSlotsForCourseSync(courseId: String) = dao.getScheduleSlotsForCourseSync(courseId)
     fun getAllScheduleSlots() = dao.getAllScheduleSlots()
     suspend fun getAllScheduleSlotsSync() = dao.getAllScheduleSlotsSync()
-    suspend fun saveAttendance(record: AttendanceRecordEntity) = dao.insertAttendance(record)
+    suspend fun saveAttendance(record: AttendanceRecordEntity) {
+        withContext(Dispatchers.IO) {
+            val existing = dao.getAttendanceRecord(record.date, record.scheduleSlotId, record.studentId)
+            val toSave = if (existing != null && record.id == 0) {
+                record.copy(id = existing.id)
+            } else {
+                record
+            }
+            dao.insertAttendance(toSave)
+        }
+    }
+
+    suspend fun saveAttendanceBatch(records: List<AttendanceRecordEntity>) {
+        withContext(Dispatchers.IO) {
+            val toSaveList = records.map { record ->
+                val existing = dao.getAttendanceRecord(record.date, record.scheduleSlotId, record.studentId)
+                if (existing != null && record.id == 0) record.copy(id = existing.id) else record
+            }
+            dao.insertAttendanceBatch(toSaveList)
+        }
+    }
+
+    suspend fun insertStudent(student: StudentEntity) {
+        withContext(Dispatchers.IO) { dao.insertStudent(student) }
+    }
+
+    suspend fun updateStudent(student: StudentEntity) {
+        withContext(Dispatchers.IO) { dao.updateStudent(student) }
+    }
+
+    suspend fun deleteStudentById(id: String) {
+        withContext(Dispatchers.IO) { dao.deleteStudentById(id) }
+    }
+
+    suspend fun getStudentById(id: String): StudentEntity? = withContext(Dispatchers.IO) {
+        dao.getStudentById(id)
+    }
+
+    fun getStudentCountForCourse(courseId: String) = dao.getStudentCountForCourse(courseId)
+    fun searchStudents(courseId: String, query: String) = dao.searchStudents(courseId, query)
+    suspend fun getStudentsPaged(courseId: String, limit: Int, offset: Int) = withContext(Dispatchers.IO) {
+        dao.getStudentsPaged(courseId, limit, offset)
+    }
+
     fun getAttendanceForSession(date: String, scheduleSlotId: String) = dao.getAttendanceForSession(date, scheduleSlotId)
-    suspend fun getAttendanceRecord(date: String, slotId: String, studentId: String) = dao.getAttendanceRecord(date, slotId, studentId)
+    suspend fun getAttendanceRecord(date: String, slotId: String, studentId: String) = withContext(Dispatchers.IO) {
+        dao.getAttendanceRecord(date, slotId, studentId)
+    }
     fun getAttendanceForCourse(courseId: String) = dao.getAttendanceForCourse(courseId)
+    suspend fun getAttendanceForCourseSync(courseId: String) = withContext(Dispatchers.IO) {
+        dao.getAttendanceForCourseSync(courseId)
+    }
+    fun getAttendanceForStudent(studentId: String) = dao.getAttendanceForStudent(studentId)
+    fun getAttendanceForStudentInCourse(studentId: String, courseId: String) = dao.getAttendanceForStudentInCourse(studentId, courseId)
     fun getAllAttendance() = dao.getAllAttendance()
-    suspend fun getFirstAttendanceForSession(date: String, slotId: String) = dao.getFirstAttendanceForSession(date, slotId)
-    suspend fun deleteAttendance(date: String, scheduleSlotId: String, studentId: String) = dao.deleteAttendance(date, scheduleSlotId, studentId)
+    fun getAttendanceCountForCourse(courseId: String) = dao.getAttendanceCountForCourse(courseId)
+    fun getDistinctAttendanceDatesForCourse(courseId: String) = dao.getDistinctAttendanceDatesForCourse(courseId)
+    fun getAttendanceForDateRange(courseId: String, startDate: String, endDate: String) = dao.getAttendanceForDateRange(courseId, startDate, endDate)
+    suspend fun getFirstAttendanceForSession(date: String, slotId: String) = withContext(Dispatchers.IO) {
+        dao.getFirstAttendanceForSession(date, slotId)
+    }
+    suspend fun deleteAttendance(date: String, scheduleSlotId: String, studentId: String) = withContext(Dispatchers.IO) {
+        dao.deleteAttendance(date, scheduleSlotId, studentId)
+    }
+    suspend fun deleteAttendanceByCourse(courseId: String) = withContext(Dispatchers.IO) {
+        dao.deleteAttendanceByCourse(courseId)
+    }
+    suspend fun replaceAttendanceForSession(date: String, scheduleSlotId: String, records: List<AttendanceRecordEntity>) = withContext(Dispatchers.IO) {
+        dao.replaceAttendanceForSession(date, scheduleSlotId, records)
+    }
 }

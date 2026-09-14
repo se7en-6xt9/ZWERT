@@ -1,197 +1,239 @@
 package com.example.viewmodel
 
 import android.graphics.Bitmap
+import android.util.Base64
 import android.util.Log
-import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.Schema
-import com.google.ai.client.generativeai.type.FunctionDeclaration
-import com.google.ai.client.generativeai.type.content
-import com.google.ai.client.generativeai.type.generationConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.TimeUnit
 
 object AiHelper {
     private const val TAG = "AiHelper"
+    private const val MODEL_NAME = "gemini-3.6-flash"
+    // User-provided Gemini API key fallback
+    const val DEFAULT_API_KEY = "AIzaSyDwM0mgO8we85qwh3Uq8QQoQdF1W8oyNBA"
+
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .build()
 
     suspend fun parseTimetableData(
-        rawText: String, 
-        image: Bitmap?, 
+        rawText: String,
+        image: Bitmap?,
         apiKey: String,
         fileBytes: ByteArray? = null,
-        fileMimeType: String? = null
+        fileMimeType: String? = null,
+        userRole: String = "teacher"
     ): String? {
         return withContext(Dispatchers.IO) {
+            val resolvedApiKey = when {
+                apiKey.isNotBlank() && apiKey != "YOUR_API_KEY_HERE" -> apiKey.trim()
+                com.example.BuildConfig.GEMINI_API_KEY.isNotBlank() && com.example.BuildConfig.GEMINI_API_KEY != "YOUR_API_KEY_HERE" -> com.example.BuildConfig.GEMINI_API_KEY.trim()
+                else -> DEFAULT_API_KEY
+            }
+
+            val roleGuidance = if (userRole.equals("student", ignoreCase = true)) {
+                """
+                ROLE: You are extracting academic timetable and study routine data for a STUDENT.
+                The student is providing class routine text, syllabus, photo/screenshot of routine, or timetable notes.
+                Extract all courses/subjects the student attends and map each into our schema:
+                - Each subject the student attends becomes an entry in "batches":
+                  - "course": { "name": "Subject/Course Name", "code": "Course Code or null" }
+                  - "section": Student's section or class (e.g. "Section B", "Semester 3") or null
+                  - "location": Default lecture hall/room/lab (e.g. "Room 204", "Physics Lab") or null
+                  - "weeklySchedule": Array of weekly class timings:
+                    - "day": Day of the week (e.g. "Monday", "Tuesday", etc.)
+                    - "time": Class timing (e.g. "09:00 - 10:00 AM", "11:30 AM")
+                    - "location": Room/Lab if specific to that slot or null
+                  - "students": [] (empty array for students)
+                - "teacher": Instructor/Professor name if mentioned in the input, or null
+                """.trimIndent()
+            } else {
+                """
+                ROLE: You are extracting academic timetable data for a TEACHER / FACULTY member.
+                The teacher is providing class schedules, student rosters, timetable photos, or notes.
+                Extract all batches the teacher conducts:
+                - Every unique combination of course + section/batch is ONE batch entry in "batches":
+                  - "course": { "name": "Course/Subject Name", "code": "Course Code or null" }
+                  - "year": Academic year or null
+                  - "semester": Semester or null
+                  - "section": Section or Class name (e.g. "CSE-A", "Class 10")
+                  - "location": Default classroom/lab or null
+                  - "weeklySchedule": Array of weekly class timings (day, time, location)
+                  - "students": Array of student objects { "name": string, "rollNumber": string|null } if a student list is provided; otherwise []
+                - "teacher": Teacher's own name and ID if mentioned, or null
+                """.trimIndent()
+            }
+
             val systemPrompt = """
-                You are a timetable data extraction engine. You will be given a 
-                teacher's class schedule as an image, text, or document. Extract the 
-                information and map it to the required JSON schema.
+                $roleGuidance
 
-                Rules:
-                1. Every unique combination of year + semester + section + course is 
-                   ONE batch entry — do not create duplicate batches for the same 
-                   combination; merge their schedule entries together instead.
-                2. For each batch, add one entry to "weeklySchedule" for every time 
-                   it occurs in a week. Classes can be ANY duration (from 15 minutes 
-                   to several hours) and occur at ANY time of day — always extract 
-                   the actual times shown, never assume a standard/fixed class length.
-                3. If a student roster/list is visible in the source, extract each 
-                   student once into that batch's "students" array. If no student 
-                   list is present, return an empty array for "students" — never 
-                   invent names or roll numbers.
-                4. For any piece of information that is not present in the source, or 
-                   that you are not reasonably confident about, output null for that 
-                   field. Do not guess, estimate, or hallucinate values to fill gaps — 
-                   an incomplete but accurate result is far better than a complete but 
-                   inaccurate one.
-                5. Ignore any information in the source that does not correspond to a 
-                   field in the schema (e.g. credit-hour tables, coordinator names, 
-                   footnotes, letterheads) — do not invent extra fields, and do not 
-                   let irrelevant text cause an error; simply skip it.
-                6. If the source is unclear, low quality, or only partially readable, 
-                   extract whatever you CAN confidently read, set everything else to 
-                   null, and still return a valid result — never refuse to respond or 
-                   return an empty/error response just because part of the input is 
-                   unclear.
-            """.trimIndent()
-            
-
-            val studentSchema = Schema(
-                name = "student",
-                description = "Student info",
-                type = com.google.ai.client.generativeai.type.FunctionType.OBJECT,
-                properties = mapOf(
-                    "id" to Schema(name="id", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING),
-                    "name" to Schema(name="name", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING),
-                    "rollNumber" to Schema(name="rollNumber", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING, nullable = true)
-                )
-            )
-
-            val scheduleSchema = Schema(
-                name = "schedule",
-                description = "Class schedule",
-                type = com.google.ai.client.generativeai.type.FunctionType.OBJECT,
-                properties = mapOf(
-                    "day" to Schema(name="day", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING),
-                    "time" to Schema(name="time", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING, nullable = true),
-                    "location" to Schema(name="location", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING, nullable = true)
-                )
-            )
-
-            val courseSchema = Schema(
-                name = "course",
-                description = "Course details",
-                type = com.google.ai.client.generativeai.type.FunctionType.OBJECT,
-                properties = mapOf(
-                    "code" to Schema(name="code", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING, nullable = true),
-                    "name" to Schema(name="name", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING, nullable = true)
-                ),
-                nullable = true
-            )
-
-            val batchSchema = Schema(
-                name = "batch",
-                description = "Batch details",
-                type = com.google.ai.client.generativeai.type.FunctionType.OBJECT,
-                properties = mapOf(
-                    "batchId" to Schema(name="batchId", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING),
-                    "year" to Schema(name="year", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING, nullable = true),
-                    "semester" to Schema(name="semester", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING, nullable = true),
-                    "course" to courseSchema,
-                    "section" to Schema(name="section", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING, nullable = true),
-                    "location" to Schema(name="location", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING, nullable = true),
-                    "weeklySchedule" to Schema(name="weeklySchedule", description="", type = com.google.ai.client.generativeai.type.FunctionType.ARRAY, items = scheduleSchema, nullable = true),
-                    "students" to Schema(name="students", description="", type = com.google.ai.client.generativeai.type.FunctionType.ARRAY, items = studentSchema, nullable = true)
-                )
-            )
-
-            val myResponseSchema = Schema(
-                name = "root",
-                description = "Root response",
-                type = com.google.ai.client.generativeai.type.FunctionType.OBJECT,
-                properties = mapOf(
-                    "teacher" to Schema(
-                        name = "teacher",
-                        description = "Teacher details",
-                        type = com.google.ai.client.generativeai.type.FunctionType.OBJECT,
-                        properties = mapOf(
-                            "name" to Schema(name="name", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING, nullable = true),
-                            "id" to Schema(name="id", description="", type = com.google.ai.client.generativeai.type.FunctionType.STRING, nullable = true)
-                        ),
-                        nullable = true
-                    ),
-                    "batches" to Schema(name="batches", description="", type = com.google.ai.client.generativeai.type.FunctionType.ARRAY, items = batchSchema)
-                )
-            )
-
-            val generativeModel = GenerativeModel(
-                modelName = "gemini-2.0-flash",
-                apiKey = apiKey,
-                systemInstruction = content { text(systemPrompt) },
-                generationConfig = generationConfig {
-                    responseMimeType = "application/json"
-                    responseSchema = myResponseSchema
-                    temperature = 0.1f
+                Universal Extraction Guidelines:
+                1. ANALYZE AND FIT: Fit whatever information is present in the input into our structure.
+                   Even if the user provides informal or partial notes (e.g. "Maths Mon 9am room 101, Physics Wed 11am"), extract them into batches and weekly schedules accurately.
+                2. IDENTIFY MISSING FIELDS:
+                   Identify any fields from the standard structure that could NOT be found or were incomplete (such as missing section, missing room/location, missing timings, missing student list, missing teacher name, etc.).
+                   List each missing field clearly in the "missingFields" string array (e.g. ["Location missing for Physics", "Section not specified", "Student list not provided"]).
+                3. PROVIDE HELPFUL SUMMARY:
+                   In the "summary" string field, provide a clear, concise summary in natural language explaining what was extracted and which fields were missing or need the user's attention.
+                4. VAGUE / INVALID INPUT HANDLING:
+                   If the input contains no recognizable classes, subjects, or timetable information (e.g. random text like "gyy"), DO NOT throw an error. Instead, return:
+                   - "batches": []
+                   - "teacher": null
+                   - "missingFields": ["timetable_data", "subject_names", "class_timings", "schedule_days"]
+                   - "summary": "No classes, subjects, or timings could be recognized from the input. Please enter subject names, days, and times, or upload a timetable photo."
+                5. Output MUST strictly be valid JSON matching this schema:
+                {
+                  "teacher": { "name": string|null, "id": string|null },
+                  "batches": [
+                    {
+                      "batchId": string|null,
+                      "year": string|null,
+                      "semester": string|null,
+                      "course": { "code": string|null, "name": string },
+                      "section": string|null,
+                      "location": string|null,
+                      "weeklySchedule": [
+                        { "day": string, "time": string|null, "location": string|null }
+                      ],
+                      "students": [
+                        { "id": string|null, "name": string, "rollNumber": string|null }
+                      ]
+                    }
+                  ],
+                  "missingFields": [string],
+                  "summary": string
                 }
-            )
+            """.trimIndent()
 
-            var attempt = 0
-            var maxAttempts = 2
-            var lastError: String? = null
-            var currentPromptText = rawText.ifBlank { "Extract the timetable from this input." }
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_NAME:generateContent?key=$resolvedApiKey"
 
-            while (attempt < maxAttempts) {
+            // Construct JSON request body for Gemini REST API
+            val partsArray = JSONArray()
+
+            // 1. Text input
+            val promptText = rawText.ifBlank { "Extract timetable and schedule from this input." }
+            val textPart = JSONObject().put("text", promptText)
+            partsArray.put(textPart)
+
+            // 2. Image input (if provided)
+            if (image != null) {
                 try {
-                    Log.d(TAG, "Starting extraction attempt ${attempt + 1}")
-                    val inputContent = content {
-                        if (image != null && attempt == 0) {
-                            image(image)
-                        }
-                        if (fileBytes != null && fileMimeType != null && attempt == 0) {
-                            blob(fileMimeType, fileBytes)
-                        }
-                        text(currentPromptText)
-                    }
-
-                    val response = generativeModel.generateContent(inputContent)
-                    val finishReason = response.candidates.firstOrNull()?.finishReason
-                    Log.d(TAG, "Raw response received. Finish Reason: $finishReason")
-                    
-                    if (finishReason?.name != "STOP") {
-                        Log.e(TAG, "Warning: Finish reason is not STOP (it is $finishReason). Data might be incomplete or blocked.")
-                    }
-
-                    var rawJson = response.text ?: ""
-                    Log.d(TAG, "Raw JSON Output length: ${rawJson.length}. Content snippet: ${rawJson.take(100)}")
-
-                    if (rawJson.contains("```json")) {
-                        rawJson = rawJson.substringAfter("```json").substringBeforeLast("```")
-                    } else if (rawJson.contains("```")) {
-                        rawJson = rawJson.substringAfter("```").substringBeforeLast("```")
-                    }
-                    
-                    rawJson = rawJson.trim()
-                    val startIndex = rawJson.indexOf('{')
-                    val endIndex = rawJson.lastIndexOf('}')
-                    if (startIndex != -1 && endIndex != -1 && endIndex >= startIndex) {
-                        rawJson = rawJson.substring(startIndex, endIndex + 1)
-                    }
-
-                    // Quick validation to see if it's parsable JSON
-                    if (rawJson.startsWith("{") && rawJson.endsWith("}")) {
-                        return@withContext rawJson
-                    } else {
-                        throw Exception("Output is not valid JSON objects. Raw output: $rawJson")
-                    }
-
+                    val stream = ByteArrayOutputStream()
+                    image.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+                    val base64Image = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+                    val inlineData = JSONObject()
+                        .put("mimeType", "image/jpeg")
+                        .put("data", base64Image)
+                    partsArray.put(JSONObject().put("inlineData", inlineData))
                 } catch (e: Exception) {
-                    lastError = e.message
-                    Log.e(TAG, "Extraction failed on attempt ${attempt + 1}: ${e.message}", e)
-                    attempt++
-                    currentPromptText = "Your previous output did not match the required schema. Return ONLY valid JSON exactly matching the provided schema. Previous error: ${e.message}"
+                    Log.e(TAG, "Failed to encode image to base64", e)
                 }
             }
+
+            // 3. Document / PDF input (if provided)
+            if (fileBytes != null && fileMimeType != null) {
+                try {
+                    val base64Doc = Base64.encodeToString(fileBytes, Base64.NO_WRAP)
+                    val inlineData = JSONObject()
+                        .put("mimeType", fileMimeType)
+                        .put("data", base64Doc)
+                    partsArray.put(JSONObject().put("inlineData", inlineData))
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to encode file to base64", e)
+                }
+            }
+
+            val contentsArray = JSONArray()
+                .put(JSONObject().put("parts", partsArray))
+
+            val systemInstruction = JSONObject()
+                .put("parts", JSONArray().put(JSONObject().put("text", systemPrompt)))
+
+            val generationConfig = JSONObject()
+                .put("responseMimeType", "application/json")
+                .put("temperature", 0.1)
+
+            val requestJson = JSONObject()
+                .put("contents", contentsArray)
+                .put("systemInstruction", systemInstruction)
+                .put("generationConfig", generationConfig)
+
+            val mediaType = "application/json; charset=utf-8".toMediaType()
+            val requestBody = requestJson.toString().toRequestBody(mediaType)
+
+            val request = Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .build()
+
+            var attempt = 0
+            val maxAttempts = 2
+            var lastError: String? = null
+
+            while (attempt < maxAttempts) {
+                attempt++
+                try {
+                    Log.d(TAG, "Executing Gemini API request (attempt $attempt) with model $MODEL_NAME...")
+                    val response = client.newCall(request).execute()
+                    val responseBody = response.body?.string() ?: ""
+
+                    if (!response.isSuccessful) {
+                        val errMsg = "Gemini API HTTP ${response.code}: $responseBody"
+                        Log.e(TAG, errMsg)
+                        lastError = errMsg
+                        continue
+                    }
+
+                    val jsonResp = JSONObject(responseBody)
+                    val candidates = jsonResp.optJSONArray("candidates")
+                    if (candidates == null || candidates.length() == 0) {
+                        lastError = "No candidates returned by Gemini"
+                        continue
+                    }
+
+                    val candidate = candidates.getJSONObject(0)
+                    val content = candidate.optJSONObject("content")
+                    val parts = content?.optJSONArray("parts")
+                    var textOutput = parts?.optJSONObject(0)?.optString("text") ?: ""
+
+                    // Clean markdown formatting if present
+                    if (textOutput.contains("```json")) {
+                        textOutput = textOutput.substringAfter("```json").substringBeforeLast("```")
+                    } else if (textOutput.contains("```")) {
+                        textOutput = textOutput.substringAfter("```").substringBeforeLast("```")
+                    }
+                    textOutput = textOutput.trim()
+
+                    val startIndex = textOutput.indexOf('{')
+                    val endIndex = textOutput.lastIndexOf('}')
+                    if (startIndex != -1 && endIndex != -1 && endIndex >= startIndex) {
+                        textOutput = textOutput.substring(startIndex, endIndex + 1)
+                    }
+
+                    if (textOutput.startsWith("{") && textOutput.endsWith("}")) {
+                        Log.d(TAG, "Gemini timetable extraction successful! Length: ${textOutput.length}")
+                        return@withContext textOutput
+                    } else {
+                        lastError = "Invalid JSON in output: $textOutput"
+                    }
+                } catch (e: Exception) {
+                    lastError = e.message ?: "Network error"
+                    Log.e(TAG, "Error on attempt $attempt: ${e.message}", e)
+                }
+            }
+
             Log.e(TAG, "All extraction attempts failed. Last error: $lastError")
-            throw Exception("Failed after $maxAttempts attempts. Last error: $lastError")
+            throw Exception(lastError ?: "Failed to extract timetable data from Gemini.")
         }
     }
 }

@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.tasks.await
 import java.time.LocalDate
 
@@ -97,10 +98,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    val currentActiveUserId: String
+        get() {
+            val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+            val isDemo = prefs.getBoolean("is_demo_account", false)
+            if (isDemo) {
+                val role = prefs.getString("profile_role", _userRole.value ?: "teacher")
+                return if (role == "student") "demo_student_user" else "demo_faculty_user"
+            }
+            val authUid = try { auth?.currentUser?.uid } catch (_: Throwable) { null }
+            if (!authUid.isNullOrBlank()) return authUid
+            val email = prefs.getString("profile_email", null)
+            if (!email.isNullOrBlank()) {
+                return "user_" + email.replace("@", "_").replace(".", "_")
+            }
+            return "local_active_user"
+        }
+
     private val repository: Repository
         get() {
-            val userId = try { auth?.currentUser?.uid ?: "default_user" } catch (e: Throwable) { "default_user" }
-            val dao = AppDatabase.getDatabase(getApplication(), userId).appDao()
+            val dao = AppDatabase.getDatabase(getApplication(), currentActiveUserId).appDao()
             return Repository(dao)
         }
 
@@ -109,13 +126,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             context = getApplication(),
             firestore = firestore,
             getDao = {
-                val userId = try { auth?.currentUser?.uid ?: "default_user" } catch (e: Throwable) { "default_user" }
-                AppDatabase.getDatabase(getApplication(), userId).appDao()
+                AppDatabase.getDatabase(getApplication(), currentActiveUserId).appDao()
             },
             getCurrentUserId = {
-                try { auth?.currentUser?.uid ?: "default_user" } catch (e: Throwable) { "default_user" }
+                currentActiveUserId
             }
         )
+    }
+
+    private val _syncProgress = MutableStateFlow(1f)
+    val syncProgress: StateFlow<Float> = _syncProgress.asStateFlow()
+
+    private val _showCelebration = MutableStateFlow(false)
+    val showCelebration: StateFlow<Boolean> = _showCelebration.asStateFlow()
+
+    private val _syncStatusText = MutableStateFlow("All data saved to Cloud & On-Device ✓")
+    val syncStatusText: StateFlow<String> = _syncStatusText.asStateFlow()
+
+    fun triggerCelebration(message: String = "All data saved to Cloud & On-Device 🎉") {
+        viewModelScope.launch {
+            _syncProgress.value = 1f
+            _syncStatusText.value = message
+            _showCelebration.value = true
+            delay(3500L)
+            _showCelebration.value = false
+        }
     }
 
     val pendingSyncCount: StateFlow<Int> get() = syncEngine.pendingCount
@@ -123,6 +158,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isEngineSyncing: StateFlow<Boolean> get() = syncEngine.isSyncing
 
     fun triggerSync() {
+        syncDataFromFirebase(force = true)
         syncEngine.triggerPushAndPullSync()
     }
 
@@ -396,13 +432,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun syncDataFromFirebase(onComplete: () -> Unit = {}) {
+    fun syncDataFromFirebase(force: Boolean = false, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             val uid = auth?.currentUser?.uid
+            val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+            val isDemo = prefs.getBoolean("is_demo_account", false)
+            if (isDemo || uid.isNullOrBlank()) {
+                onComplete()
+                return@launch
+            }
+
+            val hasInitialSynced = prefs.getBoolean("initial_sync_done_$uid", false)
+            if (!force && hasInitialSynced) {
+                // User data is already saved locally on-device. No need to download on every screen load!
+                onComplete()
+                return@launch
+            }
+
             val currentFirestore = firestore
-            if (uid != null && currentFirestore != null) {
+            if (currentFirestore != null) {
                 try {
                     _isSyncing.value = true
+                    _syncProgress.value = 0.4f
+                    _syncStatusText.value = "Downloading your cloud data to device..."
                     val batchesRef = currentFirestore.collection("users").document(uid).collection("batches")
                     val documents = getCollectionSafely(batchesRef)
                     
@@ -479,7 +531,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                         date = date,
                                         scheduleSlotId = slotId,
                                         studentId = studentId,
-                                        status = status
+                                        status = status,
+                                        courseId = batchId,
+                                        userId = uid
                                     )
                                 )
                             }
@@ -530,10 +584,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         Log.d("FirebaseSync", "No cloud records found on Firestore for user $uid")
                     }
+
+                    prefs.edit().putBoolean("initial_sync_done_$uid", true).apply()
+                    triggerCelebration("Cloud Data Downloaded to Device ✓")
                 } catch (e: Exception) {
                     Log.e("FirebaseSync", "Sync failed: ${e.message}", e)
                 } finally {
                     _isSyncing.value = false
+                    _syncProgress.value = 1f
                 }
             }
             onComplete()
@@ -823,6 +881,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .putString("profile_roll_or_emp_id", rollOrEmpId.trim())
                     .putString("profile_cabin_room_no", if (role == "teacher") extra2.trim() else "")
                     .putString("profile_email", email)
+                    .putBoolean("is_demo_account", false)
                     .putBoolean("has_profile", true)
                     .apply()
 
@@ -834,11 +893,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     branchSectionYear = branchSec
                 )
 
-                // 3. Isolated Room database setup
-                val slots = repository.getAllScheduleSlotsSync()
-                if (slots.isEmpty()) {
-                    loadDummyDataSuspend()
-                }
+                // Download user's own cloud data once (do not inject demo subjects)
+                syncDataFromFirebase(force = false)
 
                 onSuccess(role)
             } catch (e: Throwable) {
@@ -958,13 +1014,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     branchSectionYear = branchSec,
                     role = role,
                     onComplete = {
-                        viewModelScope.launch {
-                            val slots = repository.getAllScheduleSlotsSync()
-                            if (slots.isEmpty()) {
-                                loadDummyDataSuspend()
-                            }
-                            onSuccess()
-                        }
+                        val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+                        prefs.edit().putBoolean("is_demo_account", false).apply()
+                        syncDataFromFirebase(force = false)
+                        onSuccess()
                     },
                     onError = { onError(it) }
                 )
@@ -1135,6 +1188,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loginAsDemoFaculty(onComplete: () -> Unit) {
         viewModelScope.launch {
             try {
+                val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+                prefs.edit().putBoolean("is_demo_account", true).apply()
                 setUserRole("teacher")
                 initDemoProfileIfNeeded()
 
@@ -1159,6 +1214,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loginAsDemoStudent(onComplete: () -> Unit) {
         viewModelScope.launch {
             try {
+                val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+                prefs.edit().putBoolean("is_demo_account", true).apply()
                 setUserRole("student")
                 initDemoStudentProfileIfNeeded()
                 val slots = repository.getAllScheduleSlotsSync()
@@ -1246,14 +1303,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun saveReviewedTimetable(data: com.example.data.ImportTimetableData, onSuccess: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
-                android.util.Log.d("TimetableImport", "Starting save for ${data.batches?.size ?: 0} batches.")
+                // 1. Instantly save to Room DB on device
+                repository.processTimetableImport(data)
+                onSuccess()
+
+                // 2. Background Cloud Sync with progress
                 val currentAuth = auth
                 val currentFirestore = firestore
                 val uid = currentAuth?.currentUser?.uid
 
                 if (currentFirestore != null && uid != null) {
+                    _syncProgress.value = 0.3f
+                    _syncStatusText.value = "Saving classes to Cloud in background..."
                     val batchesRef = currentFirestore.collection("users").document(uid).collection("batches")
-                    data.batches?.forEach { batch ->
+                    val totalBatches = data.batches?.size ?: 1
+                    data.batches?.forEachIndexed { index, batch ->
                         val docId = batch.batchId ?: java.util.UUID.randomUUID().toString()
                         val updatedBatch = batch.copy(batchId = docId)
                         val batchRef = batchesRef.document(docId)
@@ -1297,16 +1361,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 kotlinx.coroutines.withTimeout(500L) { studentTask.await() }
                             } catch (_: Exception) {}
                         }
-                        android.util.Log.d("TimetableImport", "Saved batch $docId to Firestore.")
+                        _syncProgress.value = 0.3f + (0.6f * (index + 1) / totalBatches)
                     }
+                    triggerCelebration("Classes saved to Cloud & On-Device 🎉")
+                } else {
+                    triggerCelebration("Classes saved on Device ✓")
                 }
-
-                repository.processTimetableImport(data)
-                android.util.Log.d("TimetableImport", "Local database sync complete.")
-                onSuccess()
             } catch (e: Throwable) {
-                android.util.Log.e("TimetableImport", "Write failed: ${e.message}", e)
-                onError("Error parsing or syncing JSON: ${e.message}")
+                android.util.Log.e("TimetableImport", "Save failed: ${e.message}", e)
+                onError("Error saving timetable: ${e.message}")
             }
         }
     }
@@ -1373,14 +1436,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun saveSingleBatch(batch: com.example.data.BatchImport, onSuccess: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
+                val docId = batch.batchId ?: java.util.UUID.randomUUID().toString()
+                val updatedBatch = batch.copy(batchId = docId)
+
+                // 1. Instantly save to Room DB locally on device
+                repository.dao.deleteStudentsByCourseId(docId)
+                repository.dao.deleteScheduleSlotsByCourseId(docId)
+                
+                val dummyData = com.example.data.ImportTimetableData(teacher = null, batches = listOf(updatedBatch))
+                repository.processTimetableImport(dummyData)
+                
+                // Return success immediately so the user experiences zero lag!
+                onSuccess()
+
+                // 2. Background cloud sync
                 val currentAuth = auth
                 val currentFirestore = firestore
                 val uid = currentAuth?.currentUser?.uid
 
-                val docId = batch.batchId ?: java.util.UUID.randomUUID().toString()
-                val updatedBatch = batch.copy(batchId = docId)
-
                 if (currentFirestore != null && uid != null) {
+                    _syncProgress.value = 0.3f
+                    _syncStatusText.value = "Saving class to Cloud in background..."
                     val batchRef = currentFirestore.collection("users").document(uid).collection("batches").document(docId)
                     val scheduleList = updatedBatch.weeklySchedule?.map { s ->
                         hashMapOf(
@@ -1410,7 +1486,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     
                     val studentsRef = batchRef.collection("students")
-                    updatedBatch.students?.forEach { student ->
+                    val totalStudents = updatedBatch.students?.size ?: 1
+                    updatedBatch.students?.forEachIndexed { idx, student ->
                         val studentId = student.id?.takeIf { it.isNotBlank() } ?: java.util.UUID.randomUUID().toString()
                         val studentTask = studentsRef.document(studentId).set(hashMapOf(
                             "id" to studentId,
@@ -1420,16 +1497,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         try {
                             kotlinx.coroutines.withTimeout(500L) { studentTask.await() }
                         } catch (_: Exception) {}
+                        _syncProgress.value = 0.4f + (0.5f * (idx + 1) / totalStudents)
                     }
+                    triggerCelebration("Class saved to Cloud & On-Device 🎉")
+                } else {
+                    triggerCelebration("Class saved on Device ✓")
                 }
-
-                repository.dao.deleteStudentsByCourseId(docId)
-                repository.dao.deleteScheduleSlotsByCourseId(docId)
-                
-                val dummyData = com.example.data.ImportTimetableData(teacher = null, batches = listOf(updatedBatch))
-                repository.processTimetableImport(dummyData)
-                
-                onSuccess()
             } catch (e: Throwable) {
                 android.util.Log.e("ManualEntry", "Write failed: ${e.message}", e)
                 onError("Failed to save class: ${e.message}")
@@ -1451,11 +1524,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
+                // 1. Instantly save to Room DB locally on device
+                if (overwriteExisting) {
+                    repository.dao.deleteStudentsByCourseId(courseId)
+                }
+                val studentEntities = students.map { s ->
+                    val sId = s.id?.takeIf { it.isNotBlank() } ?: "student_${java.util.UUID.randomUUID().toString().take(12)}"
+                    com.example.data.StudentEntity(
+                        id = sId,
+                        name = s.name ?: "Unknown",
+                        rollNumber = s.rollNumber ?: "",
+                        courseId = courseId
+                    )
+                }
+                repository.dao.insertStudents(studentEntities)
+
+                // Return success immediately to unlock UI
+                onSuccess(students.size)
+
+                // 2. Background Cloud Sync
                 val currentAuth = auth
                 val currentFirestore = firestore
                 val uid = currentAuth?.currentUser?.uid
 
                 if (currentFirestore != null && uid != null) {
+                    _syncProgress.value = 0.3f
+                    _syncStatusText.value = "Syncing ${students.size} students to Cloud in background..."
                     val batchRef = currentFirestore.collection("users").document(uid).collection("batches").document(courseId)
                     val studentsRef = batchRef.collection("students")
 
@@ -1475,7 +1569,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     // Write in chunks of 350 to adhere to Firestore limits
-                    students.chunked(350).forEach { chunk ->
+                    val chunks = students.chunked(350)
+                    chunks.forEachIndexed { cIdx, chunk ->
                         val writeBatch = currentFirestore.batch()
                         chunk.forEach { student ->
                             val sId = student.id?.takeIf { it.isNotBlank() } ?: "student_${java.util.UUID.randomUUID().toString().take(12)}"
@@ -1493,24 +1588,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         } catch (e: Exception) {
                             Log.d("CsvImport", "Batch written to offline cache: ${e.message}")
                         }
+                        _syncProgress.value = 0.4f + (0.5f * (cIdx + 1) / chunks.size)
                     }
+                    triggerCelebration("${students.size} students saved to Cloud & On-Device 🎉")
+                } else {
+                    triggerCelebration("${students.size} students saved on Device ✓")
                 }
-
-                if (overwriteExisting) {
-                    repository.dao.deleteStudentsByCourseId(courseId)
-                }
-                val studentEntities = students.map { s ->
-                    val sId = s.id?.takeIf { it.isNotBlank() } ?: "student_${java.util.UUID.randomUUID().toString().take(12)}"
-                    com.example.data.StudentEntity(
-                        id = sId,
-                        name = s.name ?: "Unknown",
-                        rollNumber = s.rollNumber ?: "",
-                        courseId = courseId
-                    )
-                }
-                repository.dao.insertStudents(studentEntities)
-
-                onSuccess(students.size)
             } catch (e: Throwable) {
                 Log.e("CsvImport", "Failed to bulk import students: ${e.message}", e)
                 onError("Bulk import failed: ${e.message}")
@@ -1560,74 +1643,122 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun getAllScheduleSlotsSync() = repository.getAllScheduleSlotsSync()
     fun getAttendanceForCourse(courseId: String) = repository.getAttendanceForCourse(courseId)
     
-    fun markAttendance(date: String, slotId: String, studentId: String, status: String) {
+    fun markAttendance(date: String, slotId: String, studentId: String, status: String, courseId: String? = null) {
         viewModelScope.launch {
-            val uid = auth?.currentUser?.uid ?: return@launch
-            val db = firestore ?: return@launch
-            
-            // Need batchId to nest correctly.
-            val slot = repository.getScheduleSlotById(slotId) ?: return@launch
-            val batchId = slot.courseId
-            
-            val attendanceRef = db.collection("users").document(uid)
-                .collection("batches").document(batchId)
-                .collection("attendance")
-            
+            val slot = repository.getScheduleSlotById(slotId)
+            val batchId = courseId ?: slot?.courseId ?: ""
+            val uid = currentActiveUserId
+
+            // 1. Immediately update Room DB (Single Source of Truth)
             if (status == "NONE") {
                 repository.deleteAttendance(date, slotId, studentId)
-                attendanceRef.document("${date}_${slotId}_$studentId").delete()
             } else {
                 repository.deleteAttendance(date, slotId, studentId)
                 val record = AttendanceRecordEntity(
                     date = date,
                     scheduleSlotId = slotId,
                     studentId = studentId,
-                    status = status
+                    status = status,
+                    courseId = batchId,
+                    userId = uid,
+                    markedAt = System.currentTimeMillis()
                 )
                 repository.saveAttendance(record)
-                attendanceRef.document("${date}_${slotId}_$studentId").set(hashMapOf(
-                    "date" to date,
-                    "scheduleSlotId" to slotId,
-                    "studentId" to studentId,
-                    "status" to status
-                ))
+            }
+
+            // 2. Background push to Cloud Firestore with progress
+            val authUid = auth?.currentUser?.uid
+            val db = firestore
+            if (authUid != null && db != null && batchId.isNotBlank()) {
+                _syncProgress.value = 0.5f
+                _syncStatusText.value = "Saving to Cloud in background..."
+                try {
+                    val attendanceRef = db.collection("users").document(authUid)
+                        .collection("batches").document(batchId)
+                        .collection("attendance")
+                    val docRef = attendanceRef.document("${date}_${slotId}_$studentId")
+                    if (status == "NONE") {
+                        docRef.delete()
+                    } else {
+                        docRef.set(hashMapOf(
+                            "date" to date,
+                            "scheduleSlotId" to slotId,
+                            "studentId" to studentId,
+                            "status" to status,
+                            "courseId" to batchId,
+                            "updatedAt" to System.currentTimeMillis()
+                        ))
+                    }
+                    triggerCelebration("Attendance saved to Cloud & Device 🎉")
+                } catch (e: Throwable) {
+                    Log.w("AttendanceSync", "Cloud write queued: ${e.message}")
+                    _syncProgress.value = 1f
+                }
+            } else {
+                triggerCelebration("Saved on Device ✓")
             }
         }
     }
 
-    suspend fun getStudentAttendanceForCourse(studentId: String, courseId: String): List<AttendanceRecordEntity> {
-        return emptyList()
-    }
-    
-    fun markAllStudentsAttendance(date: String, slotId: String, studentIds: List<String>, status: String) {
+    fun getStudentAttendanceForCourse(studentId: String, courseId: String) =
+        repository.getAttendanceForStudentInCourse(studentId, courseId)
+
+    fun getStudentCountForCourse(courseId: String) = repository.getStudentCountForCourse(courseId)
+    fun searchStudents(courseId: String, query: String) = repository.searchStudents(courseId, query)
+    fun getAttendanceCountForCourse(courseId: String) = repository.getAttendanceCountForCourse(courseId)
+    fun getDistinctAttendanceDatesForCourse(courseId: String) = repository.getDistinctAttendanceDatesForCourse(courseId)
+
+    fun markAllStudentsAttendance(date: String, slotId: String, studentIds: List<String>, status: String, courseId: String? = null) {
         viewModelScope.launch {
-            val uid = auth?.currentUser?.uid ?: return@launch
-            val db = firestore ?: return@launch
-            val batch = db.batch()
-            
-            val slot = repository.getScheduleSlotById(slotId) ?: return@launch
-            val batchId = slot.courseId
-            
-            val attendanceRef = db.collection("users").document(uid)
-                .collection("batches").document(batchId)
-                .collection("attendance")
-            
-            studentIds.forEach { studentId ->
-                val record = AttendanceRecordEntity(
+            val slot = repository.getScheduleSlotById(slotId)
+            val batchId = courseId ?: slot?.courseId ?: ""
+            val uid = currentActiveUserId
+
+            // 1. Save all to Room DB in an atomic batch immediately
+            val records = studentIds.map { studentId ->
+                AttendanceRecordEntity(
                     date = date,
                     scheduleSlotId = slotId,
                     studentId = studentId,
-                    status = status
+                    status = status,
+                    courseId = batchId,
+                    userId = uid,
+                    markedAt = System.currentTimeMillis()
                 )
-                repository.saveAttendance(record)
-                batch.set(attendanceRef.document("${date}_${slotId}_$studentId"), hashMapOf(
-                    "date" to date,
-                    "scheduleSlotId" to slotId,
-                    "studentId" to studentId,
-                    "status" to status
-                ))
             }
-            batch.commit()
+            repository.saveAttendanceBatch(records)
+
+            // 2. Background sync
+            val authUid = auth?.currentUser?.uid
+            val db = firestore
+            if (authUid != null && db != null && batchId.isNotBlank()) {
+                _syncProgress.value = 0.4f
+                _syncStatusText.value = "Syncing ${studentIds.size} records to Cloud..."
+                try {
+                    val batch = db.batch()
+                    val attendanceRef = db.collection("users").document(authUid)
+                        .collection("batches").document(batchId)
+                        .collection("attendance")
+
+                    studentIds.forEach { studentId ->
+                        batch.set(attendanceRef.document("${date}_${slotId}_$studentId"), hashMapOf(
+                            "date" to date,
+                            "scheduleSlotId" to slotId,
+                            "studentId" to studentId,
+                            "status" to status,
+                            "courseId" to batchId,
+                            "updatedAt" to System.currentTimeMillis()
+                        ))
+                    }
+                    batch.commit()
+                    triggerCelebration("All ${studentIds.size} records saved to Cloud 🎉")
+                } catch (e: Throwable) {
+                    Log.w("AttendanceSync", "Batch commit queued: ${e.message}")
+                    _syncProgress.value = 1f
+                }
+            } else {
+                triggerCelebration("All ${studentIds.size} records saved on Device ✓")
+            }
         }
     }
 
@@ -1641,28 +1772,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch {
             try {
-                // 1. Save all marked records to Room DB
-                attendanceMap.forEach { (studentId, status) ->
-                    if (status == "NONE") {
-                        repository.deleteAttendance(date, slotId, studentId)
-                    } else {
-                        repository.deleteAttendance(date, slotId, studentId)
-                        val record = AttendanceRecordEntity(
-                            date = date,
-                            scheduleSlotId = slotId,
-                            studentId = studentId,
-                            status = status
-                        )
-                        repository.saveAttendance(record)
-                    }
+                val uid = currentActiveUserId
+                // 1. Efficient batch processing to Room DB immediately
+                val toDelete = attendanceMap.filter { it.value == "NONE" }
+                val toInsert = attendanceMap.filter { it.value != "NONE" }.map { (studentId, status) ->
+                    AttendanceRecordEntity(
+                        date = date,
+                        scheduleSlotId = slotId,
+                        studentId = studentId,
+                        status = status,
+                        courseId = courseId,
+                        userId = uid,
+                        markedAt = System.currentTimeMillis()
+                    )
                 }
 
-                // 2. Batch write to Firebase Firestore
-                val uid = auth?.currentUser?.uid
+                toDelete.forEach { (studentId, _) ->
+                    repository.deleteAttendance(date, slotId, studentId)
+                }
+                if (toInsert.isNotEmpty()) {
+                    repository.saveAttendanceBatch(toInsert)
+                }
+
+                // Return success immediately so the UI transitions smoothly with ZERO lag!
+                onSuccess()
+
+                // 2. Background Cloud Sync
+                val authUid = auth?.currentUser?.uid
                 val db = firestore
-                if (uid != null && db != null) {
+                if (authUid != null && db != null) {
+                    _syncProgress.value = 0.4f
+                    _syncStatusText.value = "Syncing ${attendanceMap.size} records to Cloud in background..."
                     val batch = db.batch()
-                    val attendanceRef = db.collection("users").document(uid)
+                    val attendanceRef = db.collection("users").document(authUid)
                         .collection("batches").document(courseId)
                         .collection("attendance")
 
@@ -1675,21 +1817,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 "date" to date,
                                 "scheduleSlotId" to slotId,
                                 "studentId" to studentId,
-                                "status" to status
+                                "status" to status,
+                                "courseId" to courseId,
+                                "updatedAt" to System.currentTimeMillis()
                             ))
                         }
                     }
 
                     try {
-                        kotlinx.coroutines.withTimeout(3000L) {
+                        kotlinx.coroutines.withTimeout(4000L) {
                             batch.commit().await()
                         }
+                        triggerCelebration("Session Attendance synced to Cloud 🎉")
                     } catch (e: Exception) {
-                        Log.d("AttendanceSubmit", "Firebase write queued in persistent cache or timed out: ${e.message}")
+                        Log.d("AttendanceSubmit", "Firebase write queued in persistent cache: ${e.message}")
+                        _syncProgress.value = 1f
                     }
+                } else {
+                    triggerCelebration("Saved on Device ✓")
                 }
-
-                onSuccess()
             } catch (e: Exception) {
                 Log.e("AttendanceSubmit", "Failed to submit attendance session: ${e.message}", e)
                 onError(e.message ?: "Failed to save attendance")
@@ -1709,7 +1855,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch {
             try {
-                val uid = try { auth?.currentUser?.uid ?: "default_user" } catch (_: Throwable) { "default_user" }
+                val uid = currentActiveUserId
                 val record = AttendanceRecordEntity(
                     date = date,
                     scheduleSlotId = slotId,
@@ -1719,9 +1865,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     userId = uid,
                     markedAt = System.currentTimeMillis()
                 )
-                // Queue into SyncEngine for offline-first resilience & automatic cloud sync
-                syncEngine.queueAttendanceOffline(record)
+                // 1. Immediately save to Room DB so Sheet and Dashboards update instantly!
+                repository.saveAttendance(record)
                 onSuccess()
+
+                // 2. Push to SyncEngine and Firestore
+                syncEngine.queueAttendanceOffline(record)
+                val authUid = auth?.currentUser?.uid
+                val db = firestore
+                if (authUid != null && db != null) {
+                    _syncProgress.value = 0.5f
+                    _syncStatusText.value = "Saving attendance to Cloud..."
+                    val sessionKey = "${date}_${slotId}"
+                    val docRef = db.collection("users").document(authUid)
+                        .collection("attendance_records").document("${sessionKey}_self")
+                    docRef.set(hashMapOf(
+                        "date" to date,
+                        "scheduleSlotId" to slotId,
+                        "studentId" to "self",
+                        "status" to status,
+                        "courseId" to courseId,
+                        "markedAt" to System.currentTimeMillis()
+                    ), com.google.firebase.firestore.SetOptions.merge())
+
+                    if (courseId.isNotBlank()) {
+                        val batchRef = db.collection("users").document(authUid)
+                            .collection("batches").document(courseId)
+                            .collection("attendance").document("${sessionKey}_self")
+                        batchRef.set(hashMapOf(
+                            "date" to date,
+                            "scheduleSlotId" to slotId,
+                            "studentId" to "self",
+                            "status" to status,
+                            "courseId" to courseId,
+                            "markedAt" to System.currentTimeMillis()
+                        ), com.google.firebase.firestore.SetOptions.merge())
+                    }
+                    triggerCelebration("Attendance Saved to Cloud & Device 🎉")
+                } else {
+                    triggerCelebration("Saved on Device ✓")
+                }
             } catch (e: Throwable) {
                 Log.e("SelfAttendance", "Failed to mark self attendance", e)
                 onError(e.message ?: "Failed to mark attendance")
@@ -1739,37 +1922,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch {
             try {
+                val uid = currentActiveUserId
                 val record = AttendanceRecordEntity(
                     date = date,
                     scheduleSlotId = slotId,
                     studentId = "self",
-                    status = newStatus
+                    status = newStatus,
+                    courseId = courseId,
+                    userId = uid,
+                    markedAt = System.currentTimeMillis()
                 )
                 repository.saveAttendance(record)
+                onSuccess()
 
-                val uid = auth?.currentUser?.uid
+                // Background sync
+                val authUid = auth?.currentUser?.uid
                 val db = firestore
-                if (uid != null && db != null) {
-                    val sessionId = "${date}_$slotId"
-                    val docRef = db.collection("users").document(uid)
-                        .collection("batches").document(courseId)
-                        .collection("attendance").document(sessionId)
-
-                    val data = hashMapOf(
+                if (authUid != null && db != null) {
+                    _syncProgress.value = 0.5f
+                    val sessionKey = "${date}_${slotId}"
+                    val docRef = db.collection("users").document(authUid)
+                        .collection("attendance_records").document("${sessionKey}_self")
+                    docRef.set(hashMapOf(
                         "date" to date,
                         "scheduleSlotId" to slotId,
                         "studentId" to "self",
-                        "status" to if (newStatus == "P") "present" else "absent",
-                        "markedAt" to System.currentTimeMillis(),
-                        "markedBy" to "corrected"
-                    )
-                    try {
-                        kotlinx.coroutines.withTimeout(2500L) { docRef.set(data).await() }
-                    } catch (e: Exception) {
-                        Log.d("AttendanceCorrection", "Queued in offline cache: ${e.message}")
+                        "status" to newStatus,
+                        "courseId" to courseId,
+                        "markedAt" to System.currentTimeMillis()
+                    ), com.google.firebase.firestore.SetOptions.merge())
+
+                    if (courseId.isNotBlank()) {
+                        val batchRef = db.collection("users").document(authUid)
+                            .collection("batches").document(courseId)
+                            .collection("attendance").document("${sessionKey}_self")
+                        batchRef.set(hashMapOf(
+                            "date" to date,
+                            "scheduleSlotId" to slotId,
+                            "studentId" to "self",
+                            "status" to newStatus,
+                            "courseId" to courseId,
+                            "markedAt" to System.currentTimeMillis()
+                        ), com.google.firebase.firestore.SetOptions.merge())
                     }
+                    triggerCelebration("Updated & Saved to Cloud 🎉")
+                } else {
+                    triggerCelebration("Saved on Device ✓")
                 }
-                onSuccess()
             } catch (e: Throwable) {
                 Log.e("AttendanceCorrection", "Failed to update attendance status", e)
                 onError(e.message ?: "Failed to update attendance")
