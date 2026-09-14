@@ -11,6 +11,8 @@ interface AppDao {
     suspend fun insertScheduleSlots(slots: List<ScheduleSlotEntity>)
     @Query("SELECT * FROM courses")
     fun getAllCourses(): Flow<List<CourseEntity>>
+    @Query("SELECT * FROM courses")
+    suspend fun getAllCoursesSync(): List<CourseEntity>
     @Query("SELECT * FROM courses WHERE id = :id LIMIT 1")
     suspend fun getCourseById(id: String): CourseEntity?
     @Query("SELECT * FROM students WHERE courseId = :courseId ORDER BY rollNumber ASC")
@@ -39,6 +41,12 @@ interface AppDao {
     
     @Query("SELECT attendance.* FROM attendance INNER JOIN schedule_slots ON attendance.scheduleSlotId = schedule_slots.id WHERE schedule_slots.courseId = :courseId")
     fun getAttendanceForCourse(courseId: String): Flow<List<AttendanceRecordEntity>>
+
+    @Query("SELECT * FROM attendance")
+    fun getAllAttendance(): Flow<List<AttendanceRecordEntity>>
+
+    @Query("SELECT * FROM attendance WHERE date = :date AND scheduleSlotId = :scheduleSlotId LIMIT 1")
+    suspend fun getFirstAttendanceForSession(date: String, scheduleSlotId: String): AttendanceRecordEntity?
 
     @Query("DELETE FROM attendance WHERE date = :date AND scheduleSlotId = :scheduleSlotId AND studentId = :studentId")
     suspend fun deleteAttendance(date: String, scheduleSlotId: String, studentId: String)

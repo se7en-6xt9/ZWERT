@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -61,6 +62,9 @@ private val CoursePalette = listOf(
 @Composable
 fun ManageClassesScreen(navController: NavController, viewModel: MainViewModel) {
     val courses by viewModel.getAllCourses().collectAsState(initial = emptyList())
+    val isFaculty by viewModel.isFaculty.collectAsState()
+    val userRole by viewModel.userRole.collectAsState()
+    val isTeacher = isFaculty && userRole != "student"
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
@@ -71,6 +75,10 @@ fun ManageClassesScreen(navController: NavController, viewModel: MainViewModel) 
     val deletingCourseIds = remember { mutableStateListOf<String>() }
     // Deleting state in flight for network/db operation
     var isDeletingInFlight by remember { mutableStateOf(false) }
+
+    // Bulk CSV Import Modal Dialog state
+    var isCsvImportOpen by remember { mutableStateOf(false) }
+    var csvTargetCourseId by remember { mutableStateOf<String?>(null) }
 
     // Entrance animation trigger
     var isScreenEntered by remember { mutableStateOf(false) }
@@ -94,7 +102,7 @@ fun ManageClassesScreen(navController: NavController, viewModel: MainViewModel) 
                 TopAppBar(
                     title = {
                         Text(
-                            text = "Manage Classes",
+                            text = if (isTeacher) "Manage Classes" else "My Classes",
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.titleLarge
                         )
@@ -119,6 +127,23 @@ fun ManageClassesScreen(navController: NavController, viewModel: MainViewModel) 
                             }
                         ) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    actions = {
+                        if (isTeacher) {
+                            IconButton(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    csvTargetCourseId = null
+                                    isCsvImportOpen = true
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.UploadFile,
+                                    contentDescription = "Import Students CSV",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -161,6 +186,11 @@ fun ManageClassesScreen(navController: NavController, viewModel: MainViewModel) 
                         onAddClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             navController.navigate("add_edit_batch")
+                        },
+                        onCsvImportClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            csvTargetCourseId = null
+                            isCsvImportOpen = true
                         }
                     )
                 }
@@ -225,15 +255,25 @@ fun ManageClassesScreen(navController: NavController, viewModel: MainViewModel) 
                                 ClassManageCard(
                                     course = course,
                                     accentColor = accentColor,
+                                    showCsvImport = isTeacher,
                                     isConfirmingDelete = courseConfirmingDeleteId == course.id,
                                     isDeleting = isDeletingInFlight && courseConfirmingDeleteId == course.id,
                                     onCardClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        navController.navigate("add_edit_batch?batchId=${course.id}")
+                                        if (isTeacher) {
+                                            navController.navigate("add_edit_batch?batchId=${course.id}")
+                                        } else {
+                                            navController.navigate("student_report")
+                                        }
                                     },
                                     onEditClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         navController.navigate("add_edit_batch?batchId=${course.id}")
+                                    },
+                                    onImportCsvClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        csvTargetCourseId = course.id
+                                        isCsvImportOpen = true
                                     },
                                     onDeleteClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -301,6 +341,15 @@ fun ManageClassesScreen(navController: NavController, viewModel: MainViewModel) 
             }
         }
     }
+
+    if (isCsvImportOpen) {
+        BulkCsvImportDialog(
+            viewModel = viewModel,
+            initialCourseId = csvTargetCourseId,
+            targetMode = if (csvTargetCourseId != null) CsvImportTargetMode.EXISTING_CLASS else CsvImportTargetMode.ONBOARD_NEW_CLASS,
+            onDismiss = { isCsvImportOpen = false }
+        )
+    }
 }
 
 /**
@@ -311,10 +360,12 @@ fun ManageClassesScreen(navController: NavController, viewModel: MainViewModel) 
 private fun ClassManageCard(
     course: CourseEntity,
     accentColor: Color,
+    showCsvImport: Boolean = true,
     isConfirmingDelete: Boolean,
     isDeleting: Boolean,
     onCardClick: () -> Unit,
     onEditClick: () -> Unit,
+    onImportCsvClick: () -> Unit,
     onDeleteClick: () -> Unit,
     onConfirmDelete: () -> Unit,
     onCancelDelete: () -> Unit
@@ -446,6 +497,18 @@ private fun ClassManageCard(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (showCsvImport) {
+                                // Import Students CSV Button (soft emerald green tinted circle)
+                                TintedActionButton(
+                                    icon = Icons.Default.UploadFile,
+                                    contentDescription = "Import Students CSV",
+                                    tintColor = Color(0xFF10B981),
+                                    backgroundColor = Color(0xFF10B981).copy(alpha = 0.14f),
+                                    borderColor = Color(0xFF10B981).copy(alpha = 0.28f),
+                                    onClick = onImportCsvClick
+                                )
+                            }
+
                             // Edit Button (soft blue tinted circle)
                             TintedActionButton(
                                 icon = Icons.Default.Edit,
@@ -747,7 +810,8 @@ private fun ManageClassesFab(
  */
 @Composable
 private fun ManageClassesEmptyState(
-    onAddClick: () -> Unit
+    onAddClick: () -> Unit,
+    onCsvImportClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -815,18 +879,37 @@ private fun ManageClassesEmptyState(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        OutlinedButton(
-            onClick = onAddClick,
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, Color(0xFF6366F1).copy(alpha = 0.45f)),
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = Color(0xFF818CF8)
-            ),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Create Class", fontWeight = FontWeight.SemiBold)
+            OutlinedButton(
+                onClick = onAddClick,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, Color(0xFF6366F1).copy(alpha = 0.45f)),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = Color(0xFF818CF8)
+                ),
+                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Create Class", fontWeight = FontWeight.SemiBold)
+            }
+
+            FilledTonalButton(
+                onClick = onCsvImportClick,
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = Color(0xFF10B981).copy(alpha = 0.15f),
+                    contentColor = Color(0xFF059669)
+                ),
+                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp)
+            ) {
+                Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Import CSV", fontWeight = FontWeight.SemiBold)
+            }
         }
     }
 }

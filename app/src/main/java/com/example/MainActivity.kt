@@ -51,7 +51,10 @@ class MainActivity : ComponentActivity() {
                 val navController = rememberNavController()
                 val snackbarHostState = remember { SnackbarHostState() }
                 val isLogged = viewModel.authState.value
-                val initialRoute = if (isLogged) "faculty_dashboard" else "login"
+                val userRole by viewModel.userRole.collectAsState()
+                val initialRoute = if (isLogged) {
+                    if (userRole == "student") "student_dashboard" else "faculty_dashboard"
+                } else "login"
                 
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
@@ -88,6 +91,9 @@ class MainActivity : ComponentActivity() {
                         composable("login") {
                             LoginScreen(navController = navController, viewModel = viewModel, snackbarHostState = snackbarHostState)
                         }
+                        composable("role_selection") {
+                            com.example.ui.screens.RoleSelectionScreen(navController = navController, viewModel = viewModel)
+                        }
                         composable("profile_setup") {
                             com.example.ui.screens.ProfileSetupScreen(navController = navController, viewModel = viewModel)
                         }
@@ -96,6 +102,9 @@ class MainActivity : ComponentActivity() {
                         }
                         composable("student_dashboard") {
                             StudentDashboardScreen(navController = navController, viewModel = viewModel)
+                        }
+                        composable("student_report") {
+                            com.example.ui.screens.StudentAttendanceReportScreen(navController = navController, viewModel = viewModel)
                         }
                         composable("lecture_view/{slotId}") { backStackEntry ->
                             val slotId = backStackEntry.arguments?.getString("slotId") ?: return@composable
@@ -117,6 +126,15 @@ class MainActivity : ComponentActivity() {
                         composable("attendance_report/{courseId}") { backStackEntry ->
                             val courseId = backStackEntry.arguments?.getString("courseId") ?: return@composable
                             com.example.ui.screens.AttendanceReportScreen(navController = navController, viewModel = viewModel, courseId = courseId)
+                        }
+                        composable("csv_import?courseId={courseId}", arguments = listOf(androidx.navigation.navArgument("courseId") { nullable = true; defaultValue = null })) { backStackEntry ->
+                            val courseId = backStackEntry.arguments?.getString("courseId")
+                            com.example.ui.screens.BulkCsvImportDialog(
+                                viewModel = viewModel,
+                                initialCourseId = courseId,
+                                targetMode = if (courseId != null) com.example.ui.screens.CsvImportTargetMode.EXISTING_CLASS else com.example.ui.screens.CsvImportTargetMode.ONBOARD_NEW_CLASS,
+                                onDismiss = { navController.popBackStack() }
+                            )
                         }
                     }
                 }

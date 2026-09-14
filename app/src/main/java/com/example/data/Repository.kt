@@ -61,6 +61,8 @@ class Repository(val dao: AppDao) {
         }
     }
     suspend fun wipeAllData() { withContext(Dispatchers.IO) { dao.wipeAllData() } }
+    fun getAllCourses() = dao.getAllCourses()
+    suspend fun getAllCoursesSync() = dao.getAllCoursesSync()
     fun getScheduleForDay(day: String) = dao.getScheduleForDay(day)
     suspend fun getCourseById(id: String) = dao.getCourseById(id)
     fun getStudentsByCourse(courseId: String) = dao.getStudentsByCourse(courseId)
@@ -73,5 +75,7 @@ class Repository(val dao: AppDao) {
     fun getAttendanceForSession(date: String, scheduleSlotId: String) = dao.getAttendanceForSession(date, scheduleSlotId)
     suspend fun getAttendanceRecord(date: String, slotId: String, studentId: String) = dao.getAttendanceRecord(date, slotId, studentId)
     fun getAttendanceForCourse(courseId: String) = dao.getAttendanceForCourse(courseId)
+    fun getAllAttendance() = dao.getAllAttendance()
+    suspend fun getFirstAttendanceForSession(date: String, slotId: String) = dao.getFirstAttendanceForSession(date, slotId)
     suspend fun deleteAttendance(date: String, scheduleSlotId: String, studentId: String) = dao.deleteAttendance(date, scheduleSlotId, studentId)
 }

@@ -26,8 +26,12 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileSetupScreen(navController: NavController, viewModel: MainViewModel) {
+    val isFaculty by viewModel.isFaculty.collectAsState()
+    val userRole by viewModel.userRole.collectAsState()
+    val isStudent = !isFaculty || userRole == "student"
+
     var name by remember { mutableStateOf("") }
-    var subject by remember { mutableStateOf("") }
+    var secondaryField by remember { mutableStateOf("") }
     var institute by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
     var isSuccess by remember { mutableStateOf(false) }
@@ -59,14 +63,14 @@ fun ProfileSetupScreen(navController: NavController, viewModel: MainViewModel) {
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
-                    "Welcome",
+                    text = if (isStudent) "Student Profile" else "Faculty Profile",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "Let's complete your profile.",
+                    text = if (isStudent) "Set up your student profile and batch details." else "Let's complete your faculty profile.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -87,9 +91,9 @@ fun ProfileSetupScreen(navController: NavController, viewModel: MainViewModel) {
                 Spacer(modifier = Modifier.height(16.dp))
 
                 OutlinedTextField(
-                    value = subject,
-                    onValueChange = { subject = it },
-                    label = { Text("Department / Subjects") },
+                    value = secondaryField,
+                    onValueChange = { secondaryField = it },
+                    label = { Text(if (isStudent) "Branch / Section / Year (e.g. B.Tech CSE • Sec A • 4th Sem)" else "Department / Subjects") },
                     leadingIcon = { Icon(Icons.Default.Subject, contentDescription = null) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
@@ -103,7 +107,7 @@ fun ProfileSetupScreen(navController: NavController, viewModel: MainViewModel) {
                 OutlinedTextField(
                     value = institute,
                     onValueChange = { institute = it },
-                    label = { Text("Institute Name") },
+                    label = { Text(if (isStudent) "Institution / College Name" else "Institute Name") },
                     leadingIcon = { Icon(Icons.Default.Business, contentDescription = null) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
@@ -116,20 +120,30 @@ fun ProfileSetupScreen(navController: NavController, viewModel: MainViewModel) {
 
                 Button(
                     onClick = {
-                        if (name.isBlank() || subject.isBlank() || institute.isBlank()) {
+                        if (name.isBlank() || secondaryField.isBlank() || institute.isBlank()) {
                             coroutineScope.launch {
                                 snackbarHostState.showSnackbar("Please fill all fields")
                             }
                             return@Button
                         }
                         isLoading = true
-                        viewModel.saveUserProfile(name, subject, institute,
+                        val subjectValue = if (isStudent) "Computer Science & Engineering" else secondaryField
+                        val branchValue = if (isStudent) secondaryField else ""
+                        val roleValue = if (isStudent) "student" else "teacher"
+
+                        viewModel.saveUserProfile(
+                            name = name.trim(),
+                            subject = subjectValue.trim(),
+                            institute = institute.trim(),
+                            branchSectionYear = branchValue.trim(),
+                            role = roleValue,
                             onComplete = {
                                 coroutineScope.launch {
                                     isLoading = false
                                     isSuccess = true
-                                    delay(800)
-                                    navController.navigate("faculty_dashboard") {
+                                    delay(600)
+                                    val destination = if (isStudent) "student_dashboard" else "faculty_dashboard"
+                                    navController.navigate(destination) {
                                         popUpTo("profile_setup") { inclusive = true }
                                     }
                                 }

@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Event
@@ -56,18 +57,30 @@ fun FloatingGlassNavBar(
     onNavigateManageClasses: () -> Unit,
     onNavigateProfile: () -> Unit,
     isDarkTheme: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    role: String = "teacher",
+    onNavigateReport: (() -> Unit)? = null
 ) {
     val haptic = LocalHapticFeedback.current
 
-    val tabs = remember {
-        listOf(
-            GlassTabItem(0, Icons.Default.Event, "Schedule", onClick = onNavigateSchedule),
-            GlassTabItem(1, Icons.Default.AutoAwesome, "AI Import", onClick = onNavigateAIImport),
-            GlassTabItem(2, Icons.Default.Add, "Add Class", isCenterAction = true, onClick = onNavigateAddClass),
-            GlassTabItem(3, Icons.Default.Create, "Manage", onClick = onNavigateManageClasses),
-            GlassTabItem(4, Icons.Default.Person, "Profile", onClick = onNavigateProfile)
-        )
+    val tabs = remember(role) {
+        if (role == "student") {
+            listOf(
+                GlassTabItem(0, Icons.Default.Event, "Schedule", onClick = onNavigateSchedule),
+                GlassTabItem(1, Icons.Default.Assessment, "Report", onClick = { onNavigateReport?.invoke() ?: onNavigateAIImport() }),
+                GlassTabItem(2, Icons.Default.Add, "Add Class", isCenterAction = true, onClick = onNavigateAddClass),
+                GlassTabItem(3, Icons.Default.Create, "Classes", onClick = onNavigateManageClasses),
+                GlassTabItem(4, Icons.Default.Person, "Profile", onClick = onNavigateProfile)
+            )
+        } else {
+            listOf(
+                GlassTabItem(0, Icons.Default.Event, "Schedule", onClick = onNavigateSchedule),
+                GlassTabItem(1, Icons.Default.AutoAwesome, "AI Import", onClick = onNavigateAIImport),
+                GlassTabItem(2, Icons.Default.Add, "Add Class", isCenterAction = true, onClick = onNavigateAddClass),
+                GlassTabItem(3, Icons.Default.Create, "Manage", onClick = onNavigateManageClasses),
+                GlassTabItem(4, Icons.Default.Person, "Profile", onClick = onNavigateProfile)
+            )
+        }
     }
 
     // Coordinates of each tab center for the morphing water-drop indicator

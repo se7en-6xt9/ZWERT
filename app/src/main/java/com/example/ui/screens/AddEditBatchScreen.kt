@@ -266,6 +266,10 @@ fun AddEditBatchScreen(
     // Bulk add state
     var bulkStudentsText by remember { mutableStateOf("") }
     var isBulkAddMode by remember { mutableStateOf(false) }
+    var isCsvImportModalOpen by remember { mutableStateOf(false) }
+    val isFaculty by viewModel.isFaculty.collectAsState()
+    val userRole by viewModel.userRole.collectAsState()
+    val isTeacher = isFaculty && userRole != "student"
     
     // Load existing data if editing
     LaunchedEffect(batchId) {
@@ -359,7 +363,8 @@ fun AddEditBatchScreen(
                                 Text("Summary", fontWeight = FontWeight.Bold, color = colorScheme.primary, style = MaterialTheme.typography.titleMedium)
                                 Spacer(modifier = Modifier.height(4.dp))
                                 val totalSlots = scheduleBlocks.sumOf { it.selectedDays.size } + selectedGridCells.size
-                                Text("$totalSlots class slots · ${students.size} students", color = colorScheme.onSurfaceVariant)
+                                val summaryText = if (isTeacher) "$totalSlots class slots · ${students.size} students" else "$totalSlots weekly class slots"
+                                Text(summaryText, color = colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -615,8 +620,9 @@ fun AddEditBatchScreen(
                         }
                     }
 
-                    // Students Section
-                    StaggeredEntrance(index = 3) {
+                    // Students Section (Faculty only)
+                    if (isTeacher) {
+                        StaggeredEntrance(index = 3) {
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -625,12 +631,34 @@ fun AddEditBatchScreen(
                             colors = CardDefaults.cardColors(containerColor = colorScheme.surface)
                         ) {
                             Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Students", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        "Students (${students.size})",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    FilledTonalButton(
+                                        onClick = { isCsvImportModalOpen = true },
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.filledTonalButtonColors(
+                                            containerColor = Color(0xFF10B981).copy(alpha = 0.15f),
+                                            contentColor = Color(0xFF059669)
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Import CSV", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                                    }
+                                    Spacer(Modifier.width(6.dp))
                                     TextButton(
                                         onClick = { isBulkAddMode = !isBulkAddMode }
                                     ) {
-                                        Text(if (isBulkAddMode) "Manual Add" else "Bulk Add", fontWeight = FontWeight.Bold)
+                                        Text(if (isBulkAddMode) "Manual" else "Paste", fontWeight = FontWeight.Bold)
                                     }
                                 }
                                 
@@ -737,6 +765,7 @@ fun AddEditBatchScreen(
                                     }
                                 }
                             }
+                        }
                         }
                     }
                     
@@ -1064,6 +1093,20 @@ fun AddEditBatchScreen(
                     }
                 }
             }
+        }
+
+        if (isCsvImportModalOpen) {
+            BulkCsvImportDialog(
+                viewModel = viewModel,
+                targetMode = CsvImportTargetMode.RETURN_TO_CALLER,
+                onDismiss = { isCsvImportModalOpen = false },
+                onImportFinished = { importedList ->
+                    val combined = students.toMutableList()
+                    combined.addAll(importedList)
+                    students = combined
+                    Toast.makeText(context, "Added ${importedList.size} students from CSV", Toast.LENGTH_SHORT).show()
+                }
+            )
         }
     }
 }

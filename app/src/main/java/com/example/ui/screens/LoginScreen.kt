@@ -110,14 +110,19 @@ fun LoginScreen(
                                 val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                                 viewModel.signInWithGoogleToken(
                                     googleIdTokenCredential.idToken,
-                                    onSuccess = { hasProfile ->
+                                    onSuccess = { hasProfile, role ->
                                         isSigningIn = false
-                                        if (hasProfile) {
-                                            navController.navigate("faculty_dashboard") {
+                                        if (role.isNullOrBlank()) {
+                                            navController.navigate("role_selection") {
+                                                popUpTo("login") { inclusive = true }
+                                            }
+                                        } else if (!hasProfile) {
+                                            navController.navigate("profile_setup") {
                                                 popUpTo("login") { inclusive = true }
                                             }
                                         } else {
-                                            navController.navigate("profile_setup") {
+                                            val dest = if (role == "teacher") "faculty_dashboard" else "student_dashboard"
+                                            navController.navigate(dest) {
                                                 popUpTo("login") { inclusive = true }
                                             }
                                         }
