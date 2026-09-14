@@ -266,14 +266,25 @@ fun StudentDashboardContent(
                                             subjectStats = subjectStats,
                                             onMarkSelfAttendance = {
                                                 val ctx = context
-                                                SoundFeedbackHelper.playApplePaySuccessDing(ctx)
-                                                SoundFeedbackHelper.performSuccessHaptic(ctx)
-                                                viewModel.markSelfAttendance(
-                                                    date = dateStr,
-                                                    slotId = slot.id,
-                                                    courseId = slot.courseId,
-                                                    status = "P"
-                                                )
+                                                if (isMarkedPresent) {
+                                                    // Undo / Unmark attendance if clicked again
+                                                    SoundFeedbackHelper.performSuccessHaptic(ctx)
+                                                    viewModel.deleteAttendance(
+                                                        date = dateStr,
+                                                        slotId = slot.id,
+                                                        studentId = "self"
+                                                    )
+                                                } else {
+                                                    // Mark attendance as Present
+                                                    SoundFeedbackHelper.playApplePaySuccessDing(ctx)
+                                                    SoundFeedbackHelper.performSuccessHaptic(ctx)
+                                                    viewModel.markSelfAttendance(
+                                                        date = dateStr,
+                                                        slotId = slot.id,
+                                                        courseId = slot.courseId,
+                                                        status = "P"
+                                                    )
+                                                }
                                             },
                                             onClick = {
                                                 if (slot.courseId.isNotBlank()) {
@@ -493,10 +504,32 @@ fun ElevatedStudentProfileHeader(
                     )
                 }
 
+                // Quick Theme Toggle button (Dark / Light) with SharedPreferences persistence
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.6f) else Color(0xFFF1F5F9))
+                        .clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.toggleDarkTheme()
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isDarkTheme) Icons.Default.DarkMode else Icons.Default.LightMode,
+                        contentDescription = "Toggle Theme",
+                        tint = if (isDarkTheme) Color(0xFFF59E0B) else Color(0xFF6366F1),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
                 // Profile chevron button
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(34.dp)
                         .clip(CircleShape)
                         .background(if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.6f) else Color(0xFFF1F5F9)),
                     contentAlignment = Alignment.Center
@@ -998,14 +1031,15 @@ fun StudentSelfAttendanceButton(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
                 ) {
+                    isPressedAnim = true
                     if (!isMarked) {
-                        isPressedAnim = true
                         SoundFeedbackHelper.playApplePaySuccessDing(context)
                         SoundFeedbackHelper.performSuccessHaptic(context)
-                        onMark()
                     } else {
+                        // Tactile haptic feedback when toggling / unmarking
                         SoundFeedbackHelper.performSuccessHaptic(context)
                     }
+                    onMark()
                 },
             contentAlignment = Alignment.Center
         ) {
@@ -1051,7 +1085,7 @@ fun StudentSelfAttendanceButton(
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Attended • Present",
+                            text = "Marked Present • Tap to unmark",
                             color = Color.White,
                             fontWeight = FontWeight.ExtraBold,
                             style = MaterialTheme.typography.bodyMedium
@@ -1070,7 +1104,7 @@ fun StudentSelfAttendanceButton(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Mark Self Attendance",
+                            text = "Mark Present",
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.bodyMedium

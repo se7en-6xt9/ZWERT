@@ -141,15 +141,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _userProfile = MutableStateFlow<com.example.models.UserProfile?>(null)
     val userProfile: StateFlow<com.example.models.UserProfile?> = _userProfile.asStateFlow()
 
-    private val _isDarkTheme = MutableStateFlow(false)
+    // Default theme is DARK (true). If user changes to light/white, it is persisted to local storage (SharedPreferences).
+    private val themePrefs by lazy {
+        getApplication<Application>().getSharedPreferences("app_theme_prefs", Context.MODE_PRIVATE)
+    }
+
+    private val _isDarkTheme = MutableStateFlow(true)
     val isDarkTheme: StateFlow<Boolean> = _isDarkTheme.asStateFlow()
 
     fun toggleDarkTheme() {
-        _isDarkTheme.value = !_isDarkTheme.value
+        val newTheme = !_isDarkTheme.value
+        _isDarkTheme.value = newTheme
+        try {
+            themePrefs.edit().putBoolean("is_dark_theme", newTheme).apply()
+        } catch (_: Exception) {}
     }
 
     fun setDarkTheme(enabled: Boolean) {
         _isDarkTheme.value = enabled
+        try {
+            themePrefs.edit().putBoolean("is_dark_theme", enabled).apply()
+        } catch (_: Exception) {}
     }
 
     private var profileListener: com.google.firebase.firestore.ListenerRegistration? = null
@@ -159,6 +171,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         try {
+            // Load persisted theme preference (defaults to true for Dark theme)
+            val savedDarkTheme = themePrefs.getBoolean("is_dark_theme", true)
+            _isDarkTheme.value = savedDarkTheme
+
             val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
             val savedName = prefs.getString("profile_name", null)
             val savedRole = prefs.getString("profile_role", null)
@@ -470,18 +486,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     
-                    if (batches.isNotEmpty()) {
-                        repository.wipeAllData() // Wipe old local data before replacing with cloud state
-                        val importData = com.example.data.ImportTimetableData(teacher = null, batches = batches)
-                        repository.processTimetableImport(importData)
+                    // Also pull direct tenant-isolated attendance_records (synced by SyncEngine)
+                    val directAttendanceDocs = getCollectionSafely(currentFirestore.collection("users").document(uid).collection("attendance_records"))
+                    for (aDoc in directAttendanceDocs) {
+                        val date = aDoc.getString("date") ?: ""
+                        val slotId = aDoc.getString("scheduleSlotId") ?: ""
+                        val studentId = aDoc.getString("studentId")?.takeIf { it.isNotBlank() } ?: "self"
+                        val rawStatus = aDoc.getString("status") ?: "P"
+                        val status = when (rawStatus.trim().lowercase()) {
+                            "present", "p" -> "P"
+                            "absent", "a" -> "A"
+                            "late", "l" -> "L"
+                            else -> rawStatus.uppercase()
+                        }
+                        if (date.isNotBlank() && slotId.isNotBlank()) {
+                            if (allAttendanceRecords.none { it.date == date && it.scheduleSlotId == slotId && it.studentId == studentId }) {
+                                allAttendanceRecords.add(
+                                    AttendanceRecordEntity(
+                                        date = date,
+                                        scheduleSlotId = slotId,
+                                        studentId = studentId,
+                                        status = status,
+                                        courseId = aDoc.getString("courseId") ?: "",
+                                        userId = uid
+                                    )
+                                )
+                            }
+                        }
+                    }
+
+                    if (batches.isNotEmpty() || allAttendanceRecords.isNotEmpty()) {
+                        if (batches.isNotEmpty()) {
+                            repository.wipeAllData() // Wipe old local data before replacing with cloud state
+                            val importData = com.example.data.ImportTimetableData(teacher = null, batches = batches)
+                            repository.processTimetableImport(importData)
+                        }
                         
-                        // Restore attendance records after schema is in place
+                        // Restore all cloud attendance records into local Room database
                         allAttendanceRecords.forEach { record ->
                             repository.saveAttendance(record)
                         }
                         Log.d("FirebaseSync", "Synced ${batches.size} batches and ${allAttendanceRecords.size} attendance records (cloud/cache)")
                     } else {
-                        Log.d("FirebaseSync", "No batches found on Firestore for user $uid")
+                        Log.d("FirebaseSync", "No cloud records found on Firestore for user $uid")
                     }
                 } catch (e: Exception) {
                     Log.e("FirebaseSync", "Sync failed: ${e.message}", e)
@@ -1738,6 +1785,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val db = firestore
                 if (uid != null && db != null) {
                     val sessionId = "${date}_$slotId"
+                    val docId = if (studentId == "self") "${sessionId}_self" else "${sessionId}_$studentId"
+                    try {
+                        db.collection("users").document(uid)
+                            .collection("attendance_records").document(docId)
+                            .delete()
+                    } catch (_: Exception) {}
+
                     val batches = repository.getAllCoursesSync()
                     for (batch in batches) {
                         try {
