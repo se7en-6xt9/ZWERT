@@ -598,6 +598,179 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun manualFullSync(onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            val uid = currentActiveUserId
+            val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+            val isDemo = prefs.getBoolean("is_demo_account", false)
+            
+            _isSyncing.value = true
+            _syncProgress.value = 0.08f
+            _syncStatusText.value = "Connecting to Cloud..."
+
+            try {
+                // Step 1: Push any pending unsynced offline records from device
+                _syncProgress.value = 0.25f
+                _syncStatusText.value = "Verifying pending local updates..."
+                syncEngine.triggerPushAndPullSync()
+                delay(350L)
+
+                // Step 2: Download all courses, batches, schedule, and attendance
+                val currentFirestore = firestore
+                val authUid = auth?.currentUser?.uid
+                if (currentFirestore != null && !authUid.isNullOrBlank() && !isDemo) {
+                    _syncProgress.value = 0.45f
+                    _syncStatusText.value = "Fetching courses and schedule from cloud..."
+                    
+                    val batchesRef = currentFirestore.collection("users").document(authUid).collection("batches")
+                    val documents = getCollectionSafely(batchesRef)
+
+                    val batches = mutableListOf<com.example.data.BatchImport>()
+                    val allAttendanceRecords = mutableListOf<AttendanceRecordEntity>()
+
+                    val totalDocs = documents.size
+                    var processed = 0
+
+                    for (doc in documents) {
+                        processed++
+                        _syncProgress.value = 0.45f + (0.35f * (processed.toFloat() / totalDocs.coerceAtLeast(1)))
+                        _syncStatusText.value = "Syncing class records ($processed/$totalDocs)..."
+
+                        val batchId = doc.getString("batchId") ?: doc.id
+                        val year = doc.getString("year") ?: ""
+                        val semester = doc.getString("semester") ?: ""
+                        val section = doc.getString("section") ?: ""
+                        val location = doc.getString("location") ?: ""
+                        
+                        val courseObj = doc.get("course")
+                        val course = if (courseObj is Map<*, *>) {
+                            com.example.data.CourseImport(
+                                code = courseObj["code"] as? String ?: "",
+                                name = courseObj["name"] as? String ?: ""
+                            )
+                        } else {
+                            doc.toObject(com.example.data.BatchImport::class.java)?.course 
+                                ?: com.example.data.CourseImport(code = doc.getString("courseCode") ?: "", name = doc.getString("courseName") ?: "")
+                        }
+
+                        val scheduleList = doc.get("weeklySchedule") as? List<*>
+                        val weeklySchedule = scheduleList?.mapNotNull { item ->
+                            if (item is Map<*, *>) {
+                                com.example.data.ScheduleImport(
+                                    day = item["day"] as? String ?: "",
+                                    time = item["time"] as? String ?: "",
+                                    location = item["location"] as? String
+                                )
+                            } else null
+                        } ?: doc.toObject(com.example.data.BatchImport::class.java)?.weeklySchedule ?: emptyList()
+
+                        val studentsDocs = getCollectionSafely(doc.reference.collection("students"))
+                        val students = studentsDocs.map { sDoc ->
+                            com.example.data.StudentImport(
+                                id = sDoc.getString("id") ?: sDoc.id,
+                                name = sDoc.getString("name") ?: "Unknown",
+                                rollNumber = sDoc.getString("rollNumber") ?: ""
+                            )
+                        }
+
+                        val parsedBatch = com.example.data.BatchImport(
+                            batchId = batchId,
+                            year = year,
+                            semester = semester,
+                            course = course,
+                            section = section,
+                            location = location,
+                            weeklySchedule = weeklySchedule,
+                            students = students
+                        )
+                        batches.add(parsedBatch)
+
+                        val attendanceDocs = getCollectionSafely(doc.reference.collection("attendance"))
+                        for (aDoc in attendanceDocs) {
+                            val date = aDoc.getString("date") ?: ""
+                            val slotId = aDoc.getString("scheduleSlotId") ?: ""
+                            val studentId = aDoc.getString("studentId")?.takeIf { it.isNotBlank() } ?: "self"
+                            val rawStatus = aDoc.getString("status") ?: "P"
+                            val status = when (rawStatus.trim().lowercase()) {
+                                "present", "p" -> "P"
+                                "absent", "a" -> "A"
+                                "late", "l" -> "L"
+                                else -> rawStatus.uppercase()
+                            }
+                            if (date.isNotBlank() && slotId.isNotBlank()) {
+                                allAttendanceRecords.add(
+                                    AttendanceRecordEntity(
+                                        date = date,
+                                        scheduleSlotId = slotId,
+                                        studentId = studentId,
+                                        status = status,
+                                        courseId = batchId,
+                                        userId = authUid
+                                    )
+                                )
+                            }
+                        }
+                    }
+
+                    val directAttendanceDocs = getCollectionSafely(currentFirestore.collection("users").document(authUid).collection("attendance_records"))
+                    for (aDoc in directAttendanceDocs) {
+                        val date = aDoc.getString("date") ?: ""
+                        val slotId = aDoc.getString("scheduleSlotId") ?: ""
+                        val studentId = aDoc.getString("studentId")?.takeIf { it.isNotBlank() } ?: "self"
+                        val rawStatus = aDoc.getString("status") ?: "P"
+                        val status = when (rawStatus.trim().lowercase()) {
+                            "present", "p" -> "P"
+                            "absent", "a" -> "A"
+                            "late", "l" -> "L"
+                            else -> rawStatus.uppercase()
+                        }
+                        if (date.isNotBlank() && slotId.isNotBlank()) {
+                            if (allAttendanceRecords.none { it.date == date && it.scheduleSlotId == slotId && it.studentId == studentId }) {
+                                allAttendanceRecords.add(
+                                    AttendanceRecordEntity(
+                                        date = date,
+                                        scheduleSlotId = slotId,
+                                        studentId = studentId,
+                                        status = status,
+                                        courseId = aDoc.getString("courseId") ?: "",
+                                        userId = authUid
+                                    )
+                                )
+                            }
+                        }
+                    }
+
+                    _syncProgress.value = 0.88f
+                    _syncStatusText.value = "Saving synchronized data to local database..."
+
+                    if (batches.isNotEmpty()) {
+                        repository.wipeAllData()
+                        val importData = com.example.data.ImportTimetableData(teacher = null, batches = batches)
+                        repository.processTimetableImport(importData)
+                    }
+
+                    if (allAttendanceRecords.isNotEmpty()) {
+                        repository.saveAttendanceBatch(allAttendanceRecords)
+                    }
+
+                    prefs.edit().putBoolean("initial_sync_done_$authUid", true).apply()
+                }
+
+                _syncProgress.value = 1f
+                _syncStatusText.value = "Sync Completed Successfully ✓"
+                triggerCelebration("All Cloud & Local Records In Sync! ✓")
+                onComplete(true, "Cloud synchronization complete!")
+            } catch (e: Exception) {
+                Log.e("FirebaseSync", "Manual sync error: ${e.message}", e)
+                _syncProgress.value = 1f
+                _syncStatusText.value = "Sync failed: ${e.localizedMessage}"
+                onComplete(false, e.localizedMessage ?: "Sync failed")
+            } finally {
+                _isSyncing.value = false
+            }
+        }
+    }
+
     fun signInAnonymously(onSuccess: (Boolean) -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
