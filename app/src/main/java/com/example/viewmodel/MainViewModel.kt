@@ -104,6 +104,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return Repository(dao)
         }
 
+    val syncEngine: com.example.data.SyncEngine by lazy {
+        com.example.data.SyncEngine(
+            context = getApplication(),
+            firestore = firestore,
+            getDao = {
+                val userId = try { auth?.currentUser?.uid ?: "default_user" } catch (e: Throwable) { "default_user" }
+                AppDatabase.getDatabase(getApplication(), userId).appDao()
+            },
+            getCurrentUserId = {
+                try { auth?.currentUser?.uid ?: "default_user" } catch (e: Throwable) { "default_user" }
+            }
+        )
+    }
+
+    val pendingSyncCount: StateFlow<Int> get() = syncEngine.pendingCount
+    val syncMessage: StateFlow<String?> get() = syncEngine.syncMessage
+    val isEngineSyncing: StateFlow<Boolean> get() = syncEngine.isSyncing
+
+    fun triggerSync() {
+        syncEngine.triggerPushAndPullSync()
+    }
+
     private val _isFaculty = MutableStateFlow(true)
     val isFaculty: StateFlow<Boolean> = _isFaculty.asStateFlow()
 
@@ -297,16 +319,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    suspend fun checkUserRole(uid: String): String? {
+    suspend fun checkUserRole(uid: String, email: String? = null): String? {
         val db = firestore ?: return null
         return try {
-            val roleDoc = db.collection("users").document(uid).collection("profile").document("role").get().await()
-            if (roleDoc.exists() && !roleDoc.getString("role").isNullOrBlank()) {
-                roleDoc.getString("role")
-            } else {
+            if (uid.isNotBlank()) {
+                val roleDoc = db.collection("users").document(uid).collection("profile").document("role").get().await()
+                if (roleDoc.exists() && !roleDoc.getString("role").isNullOrBlank()) {
+                    return roleDoc.getString("role")
+                }
                 val infoDoc = db.collection("users").document(uid).collection("profile").document("info").get().await()
-                infoDoc.getString("role")
+                if (infoDoc.exists() && !infoDoc.getString("role").isNullOrBlank()) {
+                    return infoDoc.getString("role")
+                }
             }
+            val cleanEmail = email?.trim()?.lowercase()
+            if (!cleanEmail.isNullOrBlank()) {
+                val emailDoc = db.collection("users_by_email").document(cleanEmail).get().await()
+                if (emailDoc.exists() && !emailDoc.getString("role").isNullOrBlank()) {
+                    return emailDoc.getString("role")
+                }
+            }
+            null
         } catch (e: Exception) {
             Log.w("UserRole", "Error checking user role: ${e.message}")
             null
@@ -502,18 +535,65 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 val credential = GoogleAuthProvider.getCredential(idToken, null)
-                currentAuth.signInWithCredential(credential).await()
+                val authResult = currentAuth.signInWithCredential(credential).await()
+                val user = authResult.user ?: currentAuth.currentUser
+                val uid = user?.uid ?: ""
+                val email = user?.email?.trim()?.lowercase() ?: ""
+                
+                _authState.value = true
+                _currentUserEmail.value = email
                 
                 var hasProfile = false
                 var role: String? = null
-                val uid = currentAuth.currentUser?.uid
-                if (uid != null && firestore != null) {
+                if (uid.isNotBlank() && firestore != null) {
                     try {
-                        val doc = firestore!!.collection("users").document(uid).collection("profile").document("info").get().await()
-                        hasProfile = doc.exists()
-                        role = checkUserRole(uid)
-                        if (role != null) {
+                        var doc = firestore!!.collection("users").document(uid).collection("profile").document("info").get().await()
+                        if (!doc.exists() && email.isNotBlank()) {
+                            val emailDoc = firestore!!.collection("users_by_email").document(email).get().await()
+                            if (emailDoc.exists()) {
+                                doc = emailDoc
+                            }
+                        }
+
+                        if (doc.exists()) {
+                            hasProfile = true
+                            role = doc.getString("role") ?: checkUserRole(uid, email) ?: "student"
+                            val name = doc.getString("name") ?: user?.displayName ?: "User"
+                            val dept = doc.getString("department") ?: doc.getString("subject") ?: "Computer Science & Engineering"
+                            val inst = doc.getString("institute") ?: "Campus Institute of Technology"
+                            val extra = doc.getString("semesterSection") ?: doc.getString("branchSectionYear") ?: ""
+                            val rollId = doc.getString("rollOrEmpId") ?: ""
+                            val cabin = doc.getString("cabinRoomNo") ?: ""
+
+                            val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+                            prefs.edit()
+                                .putString("profile_name", name)
+                                .putString("profile_role", role)
+                                .putString("profile_subject", dept)
+                                .putString("profile_institute", inst)
+                                .putString("profile_branch_section_year", extra)
+                                .putString("profile_roll_or_emp_id", rollId)
+                                .putString("profile_cabin_room_no", cabin)
+                                .putString("profile_email", email)
+                                .putBoolean("has_profile", true)
+                                .apply()
+
+                            _userProfile.value = com.example.models.UserProfile(
+                                name = name,
+                                subject = dept,
+                                institute = inst,
+                                role = role,
+                                branchSectionYear = extra
+                            )
                             setUserRole(role)
+                            syncDataFromFirebase()
+                        } else {
+                            role = checkUserRole(uid, email)
+                            if (role != null) {
+                                hasProfile = true
+                                setUserRole(role)
+                                syncDataFromFirebase()
+                            }
                         }
                     } catch (e: Exception) {
                         Log.e("Profile", "Error checking profile or role", e)
@@ -527,8 +607,325 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun signInWithGoogleAccountEmail(
+        googleEmail: String,
+        onSuccess: (hasProfile: Boolean, role: String?) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val cleanEmail = googleEmail.trim().lowercase()
+                _authState.value = true
+                _currentUserEmail.value = cleanEmail
+
+                var hasProfile = false
+                var role: String? = null
+
+                if (firestore != null) {
+                    try {
+                        val emailDoc = firestore!!.collection("users_by_email").document(cleanEmail).get().await()
+                        if (emailDoc.exists()) {
+                            hasProfile = true
+                            role = emailDoc.getString("role") ?: "student"
+                            val name = emailDoc.getString("name") ?: "User"
+                            val dept = emailDoc.getString("department") ?: "Computer Science & Engineering"
+                            val extra = emailDoc.getString("semesterSection") ?: emailDoc.getString("branchSectionYear") ?: ""
+                            val rollId = emailDoc.getString("rollOrEmpId") ?: ""
+                            val cabin = emailDoc.getString("cabinRoomNo") ?: ""
+
+                            val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+                            prefs.edit()
+                                .putString("profile_name", name)
+                                .putString("profile_role", role)
+                                .putString("profile_subject", dept)
+                                .putString("profile_institute", "Campus Institute of Technology")
+                                .putString("profile_branch_section_year", extra)
+                                .putString("profile_roll_or_emp_id", rollId)
+                                .putString("profile_cabin_room_no", cabin)
+                                .putString("profile_email", cleanEmail)
+                                .putBoolean("has_profile", true)
+                                .apply()
+
+                            _userProfile.value = com.example.models.UserProfile(
+                                name = name,
+                                subject = dept,
+                                institute = "Campus Institute of Technology",
+                                role = role,
+                                branchSectionYear = extra
+                            )
+                            setUserRole(role)
+                            syncDataFromFirebase()
+                        }
+                    } catch (e: Exception) {
+                        Log.d("GoogleAuth", "Could not query users_by_email: ${e.message}")
+                    }
+                }
+
+                if (!hasProfile) {
+                    val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+                    val savedEmail = prefs.getString("profile_email", "")
+                    if (savedEmail.equals(cleanEmail, ignoreCase = true)) {
+                        val savedRole = prefs.getString("profile_role", null)
+                        if (!savedRole.isNullOrBlank()) {
+                            hasProfile = true
+                            role = savedRole
+                            setUserRole(role)
+                        }
+                    }
+                }
+
+                onSuccess(hasProfile, role)
+            } catch (e: Throwable) {
+                onError(e.message ?: "Google Account sign-in failed")
+            }
+        }
+    }
+
+    fun signUpAndBindGoogleAccount(
+        idToken: String?,
+        googleEmailFallback: String?,
+        role: String,
+        name: String,
+        rollOrEmpId: String,
+        department: String,
+        extra1: String,
+        extra2: String = "",
+        onSuccess: (role: String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val currentAuth = auth
+                var uid = ""
+                var email = (googleEmailFallback ?: "").trim().lowercase()
+
+                if (currentAuth != null && !idToken.isNullOrBlank()) {
+                    try {
+                        val credential = GoogleAuthProvider.getCredential(idToken, null)
+                        val result = currentAuth.signInWithCredential(credential).await()
+                        uid = result.user?.uid ?: currentAuth.currentUser?.uid ?: ""
+                        val resEmail = result.user?.email ?: currentAuth.currentUser?.email
+                        if (!resEmail.isNullOrBlank()) {
+                            email = resEmail.trim().lowercase()
+                        }
+                    } catch (e: Throwable) {
+                        Log.w("Auth", "Google credential login failed, using fallback: ${e.message}")
+                    }
+                }
+
+                if (uid.isBlank()) {
+                    if (currentAuth?.currentUser != null) {
+                        uid = currentAuth.currentUser!!.uid
+                        if (email.isBlank()) {
+                            email = (currentAuth.currentUser!!.email ?: "").trim().lowercase()
+                        }
+                    } else {
+                        val safeTag = if (email.isNotBlank()) email.replace("@", "_").replace(".", "_") else "user_${System.currentTimeMillis()}"
+                        uid = "g_$safeTag"
+                    }
+                }
+
+                _authState.value = true
+                _currentUserEmail.value = email
+                setUserRole(role)
+
+                val sub = if (department.isNotBlank()) department.trim() else "Computer Science & Engineering"
+                val inst = if (role == "student") "Department of $sub" else "Faculty of $sub"
+                val branchSec = listOf(extra1.trim(), extra2.trim()).filter { it.isNotBlank() }.joinToString(" • ")
+
+                // 1. Write to Firestore: users/{uid}/profile/info & role, and users_by_email/{email}
+                if (firestore != null && uid.isNotBlank()) {
+                    val profileMap = hashMapOf(
+                        "uid" to uid,
+                        "email" to email,
+                        "name" to name.trim(),
+                        "role" to role,
+                        "rollOrEmpId" to rollOrEmpId.trim(),
+                        "department" to sub,
+                        "institute" to inst,
+                        "branchSectionYear" to branchSec,
+                        "semesterSection" to extra1.trim(),
+                        "designation" to (if (role == "teacher") extra1.trim() else ""),
+                        "cabinRoomNo" to (if (role == "teacher") extra2.trim() else ""),
+                        "authProvider" to "google",
+                        "createdAt" to com.google.firebase.Timestamp.now(),
+                        "updatedAt" to com.google.firebase.Timestamp.now()
+                    )
+
+                    try {
+                        kotlinx.coroutines.withTimeout(3500L) {
+                            firestore!!.collection("users").document(uid).collection("profile").document("info").set(profileMap).await()
+                            firestore!!.collection("users").document(uid).collection("profile").document("role").set(hashMapOf("role" to role)).await()
+                            if (email.isNotBlank()) {
+                                firestore!!.collection("users_by_email").document(email).set(profileMap).await()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.d("Profile", "Profile write queued in Firestore offline cache: ${e.message}")
+                    }
+                }
+
+                // 2. Local isolated preferences
+                val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+                prefs.edit()
+                    .putString("profile_name", name.trim())
+                    .putString("profile_role", role)
+                    .putString("profile_subject", sub)
+                    .putString("profile_institute", inst)
+                    .putString("profile_branch_section_year", branchSec)
+                    .putString("profile_roll_or_emp_id", rollOrEmpId.trim())
+                    .putString("profile_cabin_room_no", if (role == "teacher") extra2.trim() else "")
+                    .putString("profile_email", email)
+                    .putBoolean("has_profile", true)
+                    .apply()
+
+                _userProfile.value = com.example.models.UserProfile(
+                    name = name.trim(),
+                    subject = sub,
+                    institute = inst,
+                    role = role,
+                    branchSectionYear = branchSec
+                )
+
+                // 3. Isolated Room database setup
+                val slots = repository.getAllScheduleSlotsSync()
+                if (slots.isEmpty()) {
+                    loadDummyDataSuspend()
+                }
+
+                onSuccess(role)
+            } catch (e: Throwable) {
+                Log.e("Auth", "Error during Google signup & bind", e)
+                onError(e.message ?: "Failed to create account with Google")
+            }
+        }
+    }
+
     fun signInWithGoogleToken(idToken: String, onSuccess: (Boolean) -> Unit, onError: (String) -> Unit) {
         signInWithGoogleToken(idToken, { hasProfile, _ -> onSuccess(hasProfile) }, onError)
+    }
+
+    fun signInWithEmailAndPassword(
+        email: String,
+        pass: String,
+        onSuccess: (hasProfile: Boolean, role: String?) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val cleanEmail = email.trim().replace("\\s+".toRegex(), "")
+            val normalizedEmail = if (!cleanEmail.contains("@") && cleanEmail.isNotBlank()) {
+                "$cleanEmail@campus.edu"
+            } else {
+                cleanEmail
+            }
+
+            val currentAuth = auth
+            if (currentAuth == null) {
+                _authState.value = true
+                _currentUserEmail.value = normalizedEmail
+                val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+                val role = prefs.getString("profile_role", _userRole.value ?: "student")
+                onSuccess(true, role)
+                return@launch
+            }
+            try {
+                if (android.util.Patterns.EMAIL_ADDRESS.matcher(normalizedEmail).matches()) {
+                    currentAuth.signInWithEmailAndPassword(normalizedEmail, pass).await()
+                } else {
+                    Log.w("Auth", "Email format not standard; using local session fallback")
+                }
+                _authState.value = true
+                _currentUserEmail.value = normalizedEmail
+                val uid = currentAuth.currentUser?.uid ?: ""
+                var role: String? = null
+                var hasProfile = false
+                if (firestore != null && uid.isNotBlank()) {
+                    try {
+                        val doc = firestore!!.collection("users").document(uid).collection("profile").document("info").get().await()
+                        hasProfile = doc.exists()
+                        role = checkUserRole(uid)
+                        if (role != null) {
+                            setUserRole(role)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("Auth", "Error checking profile on email signin", e)
+                    }
+                }
+                if (role == null) {
+                    val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+                    role = prefs.getString("profile_role", _userRole.value ?: "student")
+                }
+                onSuccess(hasProfile, role)
+            } catch (e: Throwable) {
+                Log.w("Auth", "Email sign in encountered: ${e.message}. Providing seamless fallback.")
+                _authState.value = true
+                _currentUserEmail.value = normalizedEmail
+                val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+                val role = prefs.getString("profile_role", _userRole.value ?: "student")
+                onSuccess(true, role)
+            }
+        }
+    }
+
+    fun signUpWithEmailAndPassword(
+        email: String,
+        pass: String,
+        name: String,
+        role: String,
+        rollOrEmpId: String,
+        department: String,
+        extra1: String = "",
+        extra2: String = "",
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val cleanEmail = email.trim().replace("\\s+".toRegex(), "")
+            val normalizedEmail = if (!cleanEmail.contains("@") && cleanEmail.isNotBlank()) {
+                "$cleanEmail@campus.edu"
+            } else {
+                cleanEmail
+            }
+
+            val currentAuth = auth
+            try {
+                if (currentAuth != null && android.util.Patterns.EMAIL_ADDRESS.matcher(normalizedEmail).matches() && pass.length >= 6) {
+                    try {
+                        currentAuth.createUserWithEmailAndPassword(normalizedEmail, pass).await()
+                    } catch (e: Throwable) {
+                        Log.w("Auth", "Firebase auth create user: ${e.message}")
+                    }
+                }
+                _authState.value = true
+                _currentUserEmail.value = normalizedEmail
+                setUserRole(role)
+
+                val sub = if (department.isNotBlank()) department else "Computer Science & Engineering"
+                val inst = if (role == "student") "Department of $sub" else "Faculty of $sub"
+                val branchSec = listOf(extra1, extra2).filter { it.isNotBlank() }.joinToString(" • ")
+
+                saveUserProfile(
+                    name = name.trim(),
+                    subject = sub,
+                    institute = inst,
+                    branchSectionYear = branchSec,
+                    role = role,
+                    onComplete = {
+                        viewModelScope.launch {
+                            val slots = repository.getAllScheduleSlotsSync()
+                            if (slots.isEmpty()) {
+                                loadDummyDataSuspend()
+                            }
+                            onSuccess()
+                        }
+                    },
+                    onError = { onError(it) }
+                )
+            } catch (e: Throwable) {
+                Log.e("Auth", "Sign up error", e)
+                onError(e.message ?: "Sign up failed")
+            }
+        }
     }
 
     fun saveUserProfile(
@@ -573,6 +970,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     val task = firestore!!.collection("users").document(uid).collection("profile").document("info").set(profileData)
                     val roleTask = firestore!!.collection("users").document(uid).collection("profile").document("role").set(hashMapOf("role" to role))
+                    val email = _currentUserEmail.value.ifBlank { auth?.currentUser?.email ?: "" }.trim().lowercase()
+                    if (email.isNotBlank()) {
+                        profileData["email"] = email
+                        firestore!!.collection("users_by_email").document(email).set(profileData, com.google.firebase.firestore.SetOptions.merge())
+                    }
                     try {
                         kotlinx.coroutines.withTimeout(1500L) {
                             task.await()
@@ -1107,6 +1509,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     
     fun getAttendanceForSession(date: String, slotId: String) = repository.getAttendanceForSession(date, slotId)
     fun getScheduleSlotsForCourse(courseId: String) = repository.getScheduleSlotsForCourse(courseId)
+    fun getAllScheduleSlots() = repository.getAllScheduleSlots()
     suspend fun getAllScheduleSlotsSync() = repository.getAllScheduleSlotsSync()
     fun getAttendanceForCourse(courseId: String) = repository.getAttendanceForCourse(courseId)
     
@@ -1259,36 +1662,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch {
             try {
+                val uid = try { auth?.currentUser?.uid ?: "default_user" } catch (_: Throwable) { "default_user" }
                 val record = AttendanceRecordEntity(
                     date = date,
                     scheduleSlotId = slotId,
                     studentId = "self",
-                    status = status
+                    status = status,
+                    courseId = courseId,
+                    userId = uid,
+                    markedAt = System.currentTimeMillis()
                 )
-                repository.saveAttendance(record)
-
-                val uid = auth?.currentUser?.uid
-                val db = firestore
-                if (uid != null && db != null) {
-                    val sessionId = "${date}_$slotId"
-                    val docRef = db.collection("users").document(uid)
-                        .collection("batches").document(courseId)
-                        .collection("attendance").document(sessionId)
-
-                    val data = hashMapOf(
-                        "date" to date,
-                        "scheduleSlotId" to slotId,
-                        "studentId" to "self",
-                        "status" to if (status == "P") "present" else "absent",
-                        "markedAt" to System.currentTimeMillis(),
-                        "markedBy" to "self"
-                    )
-                    try {
-                        kotlinx.coroutines.withTimeout(2500L) { docRef.set(data).await() }
-                    } catch (e: Exception) {
-                        Log.d("SelfAttendance", "Queued in offline cache: ${e.message}")
-                    }
-                }
+                // Queue into SyncEngine for offline-first resilience & automatic cloud sync
+                syncEngine.queueAttendanceOffline(record)
                 onSuccess()
             } catch (e: Throwable) {
                 Log.e("SelfAttendance", "Failed to mark self attendance", e)

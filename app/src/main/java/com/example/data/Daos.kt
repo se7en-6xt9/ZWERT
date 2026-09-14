@@ -27,6 +27,9 @@ interface AppDao {
     fun getScheduleSlotsForCourse(courseId: String): Flow<List<ScheduleSlotEntity>>
 
     @Query("SELECT * FROM schedule_slots")
+    fun getAllScheduleSlots(): Flow<List<ScheduleSlotEntity>>
+
+    @Query("SELECT * FROM schedule_slots")
     suspend fun getAllScheduleSlotsSync(): List<ScheduleSlotEntity>
 
     @Query("SELECT * FROM schedule_slots WHERE courseId = :courseId")
@@ -50,6 +53,43 @@ interface AppDao {
 
     @Query("DELETE FROM attendance WHERE date = :date AND scheduleSlotId = :scheduleSlotId AND studentId = :studentId")
     suspend fun deleteAttendance(date: String, scheduleSlotId: String, studentId: String)
+
+    // Sync Engine Queries
+    @Query("SELECT * FROM attendance WHERE syncStatus != 'SYNCED'")
+    suspend fun getPendingAttendanceSync(): List<AttendanceRecordEntity>
+
+    @Query("SELECT COUNT(*) FROM attendance WHERE syncStatus != 'SYNCED'")
+    fun getPendingAttendanceCount(): Flow<Int>
+
+    @Query("UPDATE attendance SET syncStatus = :status, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateAttendanceSyncStatus(id: Int, status: String, updatedAt: Long = System.currentTimeMillis())
+
+    // User Profile Queries
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertUserProfile(profile: UserProfileEntity)
+
+    @Query("SELECT * FROM users_profile WHERE authId = :authId OR id = :authId LIMIT 1")
+    suspend fun getUserProfileByAuthId(authId: String): UserProfileEntity?
+
+    @Query("SELECT * FROM users_profile WHERE authId = :authId OR id = :authId LIMIT 1")
+    fun getUserProfileFlow(authId: String): Flow<UserProfileEntity?>
+
+    // Attendance Sessions
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAttendanceSession(session: AttendanceSessionEntity)
+
+    @Query("SELECT * FROM attendance_sessions WHERE courseId = :courseId ORDER BY date DESC")
+    fun getSessionsForCourse(courseId: String): Flow<List<AttendanceSessionEntity>>
+
+    @Query("SELECT * FROM attendance_sessions WHERE teacherId = :teacherId AND isActive = 1")
+    fun getActiveSessionsForTeacher(teacherId: String): Flow<List<AttendanceSessionEntity>>
+
+    // Enrollments
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertEnrollments(enrollments: List<EnrollmentEntity>)
+
+    @Query("SELECT * FROM enrollments WHERE studentId = :studentId")
+    fun getEnrollmentsForStudent(studentId: String): Flow<List<EnrollmentEntity>>
 
     @Query("DELETE FROM courses WHERE id = :courseId")
     suspend fun deleteCourseById(courseId: String)

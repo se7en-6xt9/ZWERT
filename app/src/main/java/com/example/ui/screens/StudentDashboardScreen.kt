@@ -31,9 +31,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -41,6 +43,7 @@ import androidx.navigation.NavController
 import com.example.data.CourseEntity
 import com.example.data.ScheduleSlotEntity
 import com.example.ui.components.FloatingGlassNavBar
+import com.example.ui.util.SoundFeedbackHelper
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -116,6 +119,7 @@ fun StudentDashboardContent(
     }
 
     val pagerState = rememberPagerState(initialPage = currentDayIndex, pageCount = { 7 })
+    val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
     var currentTab by remember { mutableIntStateOf(0) }
@@ -126,8 +130,22 @@ fun StudentDashboardContent(
     }
 
     val allCourses by viewModel.getAllCourses().collectAsState(initial = emptyList())
+    val allSlots by viewModel.getAllScheduleSlots().collectAsState(initial = emptyList())
     val courseMap = remember(allCourses) { allCourses.associateBy { it.id } }
     val allAttendance by viewModel.getAllAttendance().collectAsState(initial = emptyList())
+
+    // Map course ID to this student's attendance stats for that specific course (present, total)
+    val courseAttendanceMap = remember(allAttendance, allCourses, allSlots) {
+        val selfAttendance = allAttendance.filter { it.studentId == "self" }
+        allCourses.associate { course ->
+            val courseRecords = selfAttendance.filter {
+                allSlots.any { s -> s.courseId == course.id && s.id == it.scheduleSlotId } ||
+                it.scheduleSlotId.contains(course.id)
+            }
+            val p = courseRecords.count { it.status.equals("P", ignoreCase = true) || it.status.equals("present", ignoreCase = true) }
+            course.id to Pair(p, courseRecords.size)
+        }
+    }
 
     // Overall attendance stats
     val attendanceStats = remember(allAttendance) {
@@ -152,25 +170,14 @@ fun StudentDashboardContent(
             ) {
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // 1. ELEVATED STUDENT PROFILE HEADER
+                // 1. ELEVATED STUDENT PROFILE HEADER (Merged with overall stats)
                 ElevatedStudentProfileHeader(
                     viewModel = viewModel,
                     navController = navController,
                     dateStr = today.format(DateTimeFormatter.ofPattern("dd MMM yyyy")),
-                    attendancePercentage = attendanceStats.third,
-                    accentColor = accentColor
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // 2. QUICK ATTENDANCE SUMMARY PILL CARD
-                StudentSummaryPill(
                     stats = attendanceStats,
-                    isDarkTheme = isDarkTheme,
-                    onClickReport = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        navController.navigate("student_report")
-                    }
+                    accentColor = accentColor,
+                    isDarkTheme = isDarkTheme
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -247,6 +254,8 @@ fun StudentDashboardContent(
                                     val isMarkedPresent = attendanceRecord?.status?.equals("P", ignoreCase = true) == true ||
                                             attendanceRecord?.status?.equals("present", ignoreCase = true) == true
 
+                                    val subjectStats = courseAttendanceMap[slot.courseId]
+
                                     StaggeredAnimatedItem(index = index) {
                                         StudentGlassLectureCard(
                                             slot = slot,
@@ -254,9 +263,11 @@ fun StudentDashboardContent(
                                             isLive = isLive,
                                             isMarkedPresent = isMarkedPresent,
                                             timeHint = timeHint,
+                                            subjectStats = subjectStats,
                                             onMarkSelfAttendance = {
-                                                playAudioFeedback()
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                val ctx = context
+                                                SoundFeedbackHelper.playApplePaySuccessDing(ctx)
+                                                SoundFeedbackHelper.performSuccessHaptic(ctx)
                                                 viewModel.markSelfAttendance(
                                                     date = dateStr,
                                                     slotId = slot.id,
@@ -265,7 +276,11 @@ fun StudentDashboardContent(
                                                 )
                                             },
                                             onClick = {
-                                                navController.navigate("student_report")
+                                                if (slot.courseId.isNotBlank()) {
+                                                    navController.navigate("student_subject_detail/${slot.courseId}")
+                                                } else {
+                                                    navController.navigate("student_report")
+                                                }
                                             }
                                         )
                                     }
@@ -313,14 +328,34 @@ fun ElevatedStudentProfileHeader(
     viewModel: MainViewModel,
     navController: NavController,
     dateStr: String,
-    attendancePercentage: Float,
-    accentColor: Color
+    stats: Triple<Int, Int, Float>,
+    accentColor: Color,
+    isDarkTheme: Boolean
 ) {
     val userProfile by viewModel.userProfile.collectAsState()
     val isConnected by viewModel.isNetworkConnected.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
     val name = userProfile?.name?.takeIf { it.isNotBlank() } ?: "Sakshi Sharma"
     val initials = name.split(" ").mapNotNull { it.firstOrNull()?.uppercase() }.take(2).joinToString("")
+    val branchInfo = userProfile?.branchSectionYear?.takeIf { it.isNotBlank() } ?: "B.Tech CSE • 4th Sem • Sec A"
+
+    val pct = stats.third
+    val isEligible = pct >= 75f || stats.second == 0
+    val statusColor = when {
+        stats.second == 0 -> Color(0xFF6B7280)
+        pct >= 75f -> Color(0xFF10B981)
+        pct >= 50f -> Color(0xFFF59E0B)
+        else -> Color(0xFFEF4444)
+    }
+
+    var isLoaded by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { isLoaded = true }
+
+    val animatedPct by animateFloatAsState(
+        targetValue = if (isLoaded) pct else 0f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "headerPctAnim"
+    )
 
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
@@ -337,216 +372,275 @@ fun ElevatedStudentProfileHeader(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .padding(horizontal = 16.dp, vertical = 4.dp)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    navController.navigate("profile")
-                }
+            .shadow(
+                elevation = 4.dp,
+                shape = RoundedCornerShape(26.dp),
+                spotColor = accentColor.copy(alpha = 0.20f),
+                ambientColor = Color.Black.copy(alpha = 0.10f)
             ),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(26.dp),
+        color = if (isDarkTheme) Color(0xFF1E293B) else Color.White,
         border = BorderStroke(
             1.dp,
-            if (isPressed) accentColor.copy(alpha = 0.40f)
-            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
-        ),
-        shadowElevation = if (isPressed) 1.dp else 3.dp
+            if (isDarkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)
+        )
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(18.dp)
         ) {
-            // Modern gradient avatar with active status dot
-            Box(contentAlignment = Alignment.BottomEnd) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.linearGradient(
-                                listOf(Color(0xFF10B981), Color(0xFF059669))
-                            )
-                        )
-                        .shadow(4.dp, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = initials.ifEmpty { "ST" },
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White
-                    )
-                }
-
-                // Online/Syncing Status Indicator Dot
-                Box(
-                    modifier = Modifier
-                        .size(13.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(2.dp)
-                ) {
+            // 1. TOP HEADER ROW: AVATAR + NAME & DETAILS + PROFILE CHEVRON
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            navController.navigate("profile")
+                        }
+                    ),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Avatar with smooth gradient and active status badge
+                Box(contentAlignment = Alignment.BottomEnd) {
                     Box(
                         modifier = Modifier
-                            .fillMaxSize()
+                            .size(50.dp)
+                            .shadow(4.dp, CircleShape)
                             .clip(CircleShape)
                             .background(
-                                if (isSyncing) Color(0xFFF59E0B)
-                                else if (isConnected) Color(0xFF10B981)
-                                else Color(0xFF94A3B8)
-                            )
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(14.dp))
-
-            // Student Name, Role Subtitle & Branch info
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = Color(0xFF10B981).copy(alpha = 0.14f),
-                        border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.28f))
+                                Brush.linearGradient(
+                                    listOf(Color(0xFF10B981), Color(0xFF059669))
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Student",
-                            color = Color(0xFF059669),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            text = initials.ifEmpty { "SS" },
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Black,
+                            color = Color.White
+                        )
+                    }
+
+                    // Online / Cloud sync indicator dot
+                    Box(
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clip(CircleShape)
+                            .background(if (isDarkTheme) Color(0xFF1E293B) else Color.White)
+                            .padding(2.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(CircleShape)
+                                .background(
+                                    if (isSyncing) Color(0xFFF59E0B)
+                                    else if (isConnected) Color(0xFF10B981)
+                                    else Color(0xFF94A3B8)
+                                )
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.width(14.dp))
 
-                val branchInfo = userProfile?.branchSectionYear?.takeIf { it.isNotBlank() } ?: "B.Tech CSE • Sec A"
-                Text(
-                    text = "$branchInfo • $dateStr",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1
-                )
-            }
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFF10B981).copy(alpha = 0.14f),
+                            border = BorderStroke(0.8.dp, Color(0xFF10B981).copy(alpha = 0.32f))
+                        ) {
+                            Text(
+                                text = "Student",
+                                color = Color(0xFF059669),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
 
-            // Interactive chevron indicator
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (isPressed) accentColor.copy(alpha = 0.15f)
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = "View Profile",
-                    tint = if (isPressed) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
-    }
-}
+                    Spacer(modifier = Modifier.height(2.dp))
 
-/**
- * Compact high-information summary pill showing overall attendance % and criteria status
- */
-@Composable
-fun StudentSummaryPill(
-    stats: Triple<Int, Int, Float>,
-    isDarkTheme: Boolean,
-    onClickReport: () -> Unit
-) {
-    val pct = stats.third
-    val isEligible = pct >= 75f
-    val statusColor = if (isEligible) Color(0xFF10B981) else Color(0xFFEF4444)
+                    Text(
+                        text = "$branchInfo • $dateStr",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .bounceClick(scaleDown = 0.98f, onClick = onClickReport),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isDarkTheme) Color(0xFF1E293B).copy(alpha = 0.8f) else Color(0xFFEEF2FF)
-        ),
-        border = BorderStroke(1.dp, if (isDarkTheme) Color(0xFF334155) else Color(0xFFC7D2FE).copy(alpha = 0.6f))
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Profile chevron button
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(32.dp)
                         .clip(CircleShape)
-                        .background(statusColor.copy(alpha = 0.16f)),
+                        .background(if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.6f) else Color(0xFFF1F5F9)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (isEligible) Icons.Default.CheckCircle else Icons.Default.Warning,
-                        contentDescription = null,
-                        tint = statusColor,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column {
-                    Text(
-                        text = "Attendance Overview",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "${stats.first} of ${stats.second} lectures attended",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = "Profile",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            val pendingSyncCount by viewModel.pendingSyncCount.collectAsState(initial = 0)
+            val isEngineSyncing by viewModel.isEngineSyncing.collectAsState(initial = false)
+            val isOnline by viewModel.isNetworkConnected.collectAsState()
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Sync Status Pill (Offline-First SSOT Indicator)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        if (pendingSyncCount > 0 || !isOnline) Color(0xFFFEF3C7).copy(alpha = 0.8f)
+                        else Color(0xFFF0FDF4).copy(alpha = 0.8f)
+                    )
+                    .clickable {
+                        viewModel.triggerSync()
+                    }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (isEngineSyncing) Icons.Default.Sync else if (pendingSyncCount > 0 || !isOnline) Icons.Default.CloudOff else Icons.Default.CloudDone,
+                        contentDescription = null,
+                        tint = if (pendingSyncCount > 0 || !isOnline) Color(0xFFD97706) else Color(0xFF059669),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isEngineSyncing) "Syncing with cloud..." else if (pendingSyncCount > 0) "$pendingSyncCount offline queued • Tap to sync" else if (!isOnline) "Offline • Local SSOT active" else "Synced with cloud",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (pendingSyncCount > 0 || !isOnline) Color(0xFF92400E) else Color(0xFF065F46)
+                    )
+                }
+
                 Text(
-                    text = "${String.format(Locale.ENGLISH, "%.1f", pct)}%",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = statusColor
+                    text = "SSOT",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (pendingSyncCount > 0 || !isOnline) Color(0xFFB45309) else Color(0xFF047857)
                 )
-                Spacer(modifier = Modifier.width(6.dp))
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
-                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+            HorizontalDivider(
+                color = if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.6f) else Color(0xFFF1F5F9),
+                thickness = 1.dp
+            )
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // 2. INTEGRATED STATS ROW: ATTENDANCE SUMMARY + PROGRESS RING
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        navController.navigate("student_report")
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (stats.second > 0) "${String.format(Locale.ENGLISH, "%.1f", animatedPct)}%" else "—",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Black,
+                            color = statusColor
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = statusColor.copy(alpha = 0.14f),
+                            border = BorderStroke(0.8.dp, statusColor.copy(alpha = 0.32f))
+                        ) {
+                            Text(
+                                text = when {
+                                    stats.second == 0 -> "No sessions yet"
+                                    pct >= 75f -> "Eligible (≥75%)"
+                                    pct >= 50f -> "Borderline"
+                                    else -> "Shortage Alert"
+                                },
+                                color = statusColor,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = if (stats.second > 0) "${stats.first} of ${stats.second} lectures attended" else "Attendance will track as classes occur",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Smooth Circular Progress Ring with tap register indicator
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier.size(52.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            progress = { if (stats.second > 0) (animatedPct / 100f).coerceIn(0f, 1f) else 0f },
+                            modifier = Modifier.size(52.dp),
+                            strokeWidth = 5.dp,
+                            color = statusColor,
+                            trackColor = if (isDarkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)
+                        )
+                        Icon(
+                            imageVector = if (isEligible) Icons.Default.CheckCircle else Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = statusColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = "View Register",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
         }
     }
@@ -564,6 +658,7 @@ fun StudentGlassLectureCard(
     isLive: Boolean = false,
     isMarkedPresent: Boolean = false,
     timeHint: String? = null,
+    subjectStats: Pair<Int, Int>? = null,
     onMarkSelfAttendance: () -> Unit,
     onClick: () -> Unit
 ) {
@@ -738,7 +833,7 @@ fun StudentGlassLectureCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // Location & Section (Hiding faculty students count)
                 Row(
@@ -773,7 +868,52 @@ fun StudentGlassLectureCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                // Per-Subject Attendance Pill Badge
+                if (subjectStats != null && subjectStats.second > 0) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    val subPct = (subjectStats.first * 100f) / subjectStats.second
+                    val subColor = when {
+                        subPct >= 75f -> Color(0xFF10B981)
+                        subPct >= 50f -> Color(0xFFF59E0B)
+                        else -> Color(0xFFEF4444)
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = subColor.copy(alpha = 0.10f),
+                        border = BorderStroke(0.8.dp, subColor.copy(alpha = 0.28f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .clip(CircleShape)
+                                        .background(subColor)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Your Attendance: ${String.format(Locale.ENGLISH, "%.1f", subPct)}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = subColor
+                                )
+                            }
+                            Text(
+                                text = "${subjectStats.first}/${subjectStats.second} attended",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
 
                 // 6. STUDENT SELF ATTENDANCE BUTTON
                 StudentSelfAttendanceButton(
@@ -786,60 +926,129 @@ fun StudentGlassLectureCard(
 }
 
 /**
- * Animated "Mark Self Attendance" button with green feedback, tactile bounce, and double-marking prevention.
+ * Animated "Mark Self Attendance" button with rich spring scale compression (0.96x),
+ * circular checkmark morph, radial glow ripple effect, Apple Pay chime audio, and haptic feedback.
  */
 @Composable
 fun StudentSelfAttendanceButton(
     isMarked: Boolean,
     onMark: () -> Unit
 ) {
-    val haptic = LocalHapticFeedback.current
+    val context = LocalContext.current
+    var isPressedAnim by remember { mutableStateOf(false) }
 
-    val containerColor by animateColorAsState(
-        if (isMarked) Color(0xFF10B981) else MaterialTheme.colorScheme.primary,
-        label = "btnColor"
+    // Subtle scale compression (0.96x) with fluid spring animation
+    val scale by animateFloatAsState(
+        targetValue = if (isPressedAnim) 0.96f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "buttonSpringScale"
     )
+
+    // Gentle radial glow effect expanding from the attendance badge
+    val glowAlpha by animateFloatAsState(
+        targetValue = if (isMarked) 0.40f else 0f,
+        animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
+        label = "glowAlpha"
+    )
+
+    val buttonGradient = if (isMarked) {
+        Brush.horizontalGradient(listOf(Color(0xFF10B981), Color(0xFF059669)))
+    } else {
+        Brush.horizontalGradient(listOf(Color(0xFF6366F1), Color(0xFF4F46E5)))
+    }
 
     Box(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center
     ) {
+        // Radial glow background expansion
+        if (glowAlpha > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFF10B981).copy(alpha = glowAlpha),
+                                Color.Transparent
+                            )
+                        ),
+                        shape = RoundedCornerShape(20.dp)
+                    )
+            )
+        }
+
         Box(
             modifier = Modifier
+                .graphicsLayer(scaleX = scale, scaleY = scale)
                 .fillMaxWidth()
-                .height(48.dp)
+                .height(50.dp)
+                .shadow(
+                    elevation = if (isMarked) 3.dp else 6.dp,
+                    shape = RoundedCornerShape(16.dp),
+                    spotColor = if (isMarked) Color(0xFF10B981).copy(alpha = 0.4f) else Color(0xFF6366F1).copy(alpha = 0.45f)
+                )
                 .clip(RoundedCornerShape(16.dp))
-                .background(containerColor)
-                .bounceClick(scaleDown = if (isMarked) 0.99f else 0.96f) {
+                .background(buttonGradient)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
                     if (!isMarked) {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        isPressedAnim = true
+                        SoundFeedbackHelper.playApplePaySuccessDing(context)
+                        SoundFeedbackHelper.performSuccessHaptic(context)
                         onMark()
                     } else {
-                        // Already marked feedback
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        SoundFeedbackHelper.performSuccessHaptic(context)
                     }
                 },
             contentAlignment = Alignment.Center
         ) {
+            LaunchedEffect(isPressedAnim) {
+                if (isPressedAnim) {
+                    delay(180)
+                    isPressedAnim = false
+                }
+            }
+
             AnimatedContent(
                 targetState = isMarked,
                 transitionSpec = {
-                    fadeIn(animationSpec = tween(300)) + scaleIn(initialScale = 0.92f) togetherWith
-                            fadeOut(animationSpec = tween(150))
+                    (fadeIn(animationSpec = tween(280)) + scaleIn(
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessMedium
+                        ),
+                        initialScale = 0.82f
+                    )) togetherWith (fadeOut(animationSpec = tween(140)) + scaleOut(targetScale = 0.9f))
                 },
-                label = "markedState"
+                label = "markedStateMorph"
             ) { marked ->
                 if (marked) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = "Attended",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
+                        // Circular checkmark morph with clean spring animation
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.25f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Attended",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Attended • Present",
@@ -856,13 +1065,13 @@ fun StudentSelfAttendanceButton(
                         Icon(
                             imageVector = Icons.Default.Check,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimary,
+                            tint = Color.White,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Mark Self Attendance",
-                            color = MaterialTheme.colorScheme.onPrimary,
+                            color = Color.White,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.bodyMedium
                         )

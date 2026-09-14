@@ -34,6 +34,50 @@ object SoundFeedbackHelper {
     }
 
     /**
+     * Instant, pleasant, low-latency success chime sound (similar to Apple Pay ding / pleasant marimba pop, 44.1kHz audio).
+     */
+    fun playApplePaySuccessDing(context: Context) {
+        if (!isSoundEnabled(context)) return
+        audioScope.launch {
+            synthesizeAndPlayTone(
+                freq1 = 1046.5, // C6
+                freq2 = 1318.5, // E6 harmonic overtone
+                durationMs = 240,
+                volume = 0.65f,
+                decayRate = 4.2
+            )
+        }
+    }
+
+    /**
+     * Heavy / Success haptic vibration pattern for self-attendance registration.
+     */
+    fun performSuccessHaptic(context: Context) {
+        try {
+            val vibrator = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+                vm?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+            }
+
+            if (vibrator?.hasVibrator() == true) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    val timings = longArrayOf(0, 35, 40, 55)
+                    val amplitudes = intArrayOf(0, 180, 0, 255)
+                    vibrator.vibrate(android.os.VibrationEffect.createWaveform(timings, amplitudes, -1))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(longArrayOf(0, 40, 40, 60), -1)
+                }
+            }
+        } catch (e: Throwable) {
+            Log.d("SoundFeedback", "Haptic bypassed: ${e.message}")
+        }
+    }
+
+    /**
      * Soft, pleasant high chime (two-note harmonic chime ~180ms) for Present
      */
     fun playPresentSound(context: Context) {

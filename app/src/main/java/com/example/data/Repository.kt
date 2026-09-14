@@ -70,6 +70,7 @@ class Repository(val dao: AppDao) {
     suspend fun getScheduleSlotById(id: String) = dao.getScheduleSlotById(id)
     fun getScheduleSlotsForCourse(courseId: String) = dao.getScheduleSlotsForCourse(courseId)
     suspend fun getScheduleSlotsForCourseSync(courseId: String) = dao.getScheduleSlotsForCourseSync(courseId)
+    fun getAllScheduleSlots() = dao.getAllScheduleSlots()
     suspend fun getAllScheduleSlotsSync() = dao.getAllScheduleSlotsSync()
     suspend fun saveAttendance(record: AttendanceRecordEntity) = dao.insertAttendance(record)
     fun getAttendanceForSession(date: String, scheduleSlotId: String) = dao.getAttendanceForSession(date, scheduleSlotId)

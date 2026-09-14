@@ -36,6 +36,7 @@ import androidx.navigation.NavController
 import com.example.data.AttendanceRecordEntity
 import com.example.data.CourseEntity
 import com.example.data.ScheduleSlotEntity
+import com.example.ui.components.FloatingGlassNavBar
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -97,9 +98,9 @@ fun StudentAttendanceReportScreen(
     // Grid Dimensions
     val cellWidth = 72.dp
     val cellWidthPx = with(density) { cellWidth.toPx() }
-    val leftColWidth = 190.dp
+    val leftColWidth = 215.dp
     val headerHeight = 72.dp
-    val rowHeight = 64.dp
+    val rowHeight = 72.dp
     val gridBorderColor = if (isDarkTheme) Color(0xFF2D3748) else Color(0xFFE2E8F0)
 
     val hScroll = rememberScrollState()
@@ -138,20 +139,38 @@ fun StudentAttendanceReportScreen(
         mutableStateOf<Triple<CourseEntity, LocalDate, ScheduleSlotEntity?>?>(null)
     }
 
-    // Compute student stats
-    val stats = remember(allAttendance, courses, allSlots) {
-        var totalMarked = 0
-        var totalPresent = 0
-        allAttendance.forEach { rec ->
-            if (rec.studentId == "self") {
-                totalMarked++
-                if (rec.status.equals("P", ignoreCase = true) || rec.status.equals("present", ignoreCase = true)) {
-                    totalPresent++
+    // Compute comprehensive student stats across all courses
+    val overallPresent = remember(allAttendance) {
+        allAttendance.count { it.studentId == "self" && (it.status.equals("P", ignoreCase = true) || it.status.equals("present", ignoreCase = true)) }
+    }
+    val overallTotal = remember(allAttendance) {
+        allAttendance.count { it.studentId == "self" }
+    }
+    val overallPct = remember(overallPresent, overallTotal) {
+        if (overallTotal > 0) (overallPresent * 100f) / overallTotal else 0f
+    }
+
+    // Compute per-subject health summary
+    val (atRiskSubjectsCount, totalSubjectsWithSessions) = remember(allAttendance, courses, allSlots) {
+        var atRisk = 0
+        var withSessions = 0
+        courses.forEach { course ->
+            val cAttendance = allAttendance.filter {
+                it.studentId == "self" && (
+                    allSlots.any { s -> s.courseId == course.id && s.id == it.scheduleSlotId } ||
+                    it.scheduleSlotId.contains(course.id)
+                )
+            }
+            if (cAttendance.isNotEmpty()) {
+                withSessions++
+                val p = cAttendance.count { it.status.equals("P", ignoreCase = true) || it.status.equals("present", ignoreCase = true) }
+                val cPct = (p * 100f) / cAttendance.size
+                if (cPct < 75f) {
+                    atRisk++
                 }
             }
         }
-        val pct = if (totalMarked > 0) (totalPresent * 100f) / totalMarked else 0f
-        Triple(totalPresent, totalMarked, pct)
+        Pair(atRisk, withSessions)
     }
 
     Scaffold(
@@ -163,20 +182,11 @@ fun StudentAttendanceReportScreen(
             ) {
                 TopAppBar(
                     title = {
-                        Column {
-                            Text(
-                                text = "Attendance Register",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleLarge
-                            )
-                            val studentName = userProfile?.name?.takeIf { it.isNotBlank() } ?: "Student"
-                            val branch = userProfile?.branchSectionYear?.takeIf { it.isNotBlank() } ?: "B.Tech CSE"
-                            Text(
-                                text = "$studentName • $branch",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Text(
+                            text = "Attendance Register",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleLarge
+                        )
                     },
                     navigationIcon = {
                         IconButton(onClick = { navController.popBackStack() }) {
@@ -232,74 +242,291 @@ fun StudentAttendanceReportScreen(
                     )
                 }
 
-                // Overall Stats Banner Card
+                // Merged Student Profile & Overall Attendance Stats Card
+                val overallColor = when {
+                    overallTotal == 0 -> Color(0xFF6B7280)
+                    overallPct >= 75f -> Color(0xFF10B981)
+                    overallPct >= 50f -> Color(0xFFF59E0B)
+                    else -> Color(0xFFEF4444)
+                }
+
+                var isCardAnimated by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) { isCardAnimated = true }
+                val animatedOverallPct by animateFloatAsState(
+                    targetValue = if (isCardAnimated) overallPct else 0f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessLow
+                    ),
+                    label = "registerOverallPct"
+                )
+
+                val studentName = userProfile?.name?.takeIf { it.isNotBlank() } ?: "Sakshi Sharma"
+                val branch = userProfile?.branchSectionYear?.takeIf { it.isNotBlank() } ?: "B.Tech CSE • 4th Sem • Sec A"
+                val studentInitials = studentName.split(" ").mapNotNull { it.firstOrNull()?.uppercase() }.take(2).joinToString("")
+
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    shape = RoundedCornerShape(20.dp),
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .shadow(
+                            elevation = 4.dp,
+                            shape = RoundedCornerShape(26.dp),
+                            spotColor = overallColor.copy(alpha = 0.22f),
+                            ambientColor = Color.Black.copy(alpha = 0.08f)
+                        ),
+                    shape = RoundedCornerShape(26.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isDarkTheme) Color(0xFF1E293B) else Color(0xFFEEF2FF)
+                        containerColor = if (isDarkTheme) Color(0xFF1E293B) else Color.White
                     ),
                     border = BorderStroke(
                         1.dp,
-                        if (isDarkTheme) Color(0xFF334155) else Color(0xFFC7D2FE)
+                        if (isDarkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)
                     )
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .padding(18.dp)
                     ) {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                val pct = stats.third
-                                val pctColor = if (pct >= 75f) Color(0xFF10B981) else Color(0xFFEF4444)
+                        // 1. TOP HEADER: AVATAR + STUDENT NAME + BRANCH + STUDENT PILL
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .shadow(3.dp, CircleShape)
+                                    .clip(CircleShape)
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFF10B981), Color(0xFF059669))
+                                        )
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Text(
-                                    text = "${String.format(Locale.ENGLISH, "%.1f", pct)}%",
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = pctColor
+                                    text = studentInitials.ifEmpty { "SS" },
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Black,
+                                    color = Color.White
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = pctColor.copy(alpha = 0.15f),
-                                    border = BorderStroke(1.dp, pctColor.copy(alpha = 0.3f))
-                                ) {
-                                    Text(
-                                        text = if (pct >= 75f) "Eligible (≥75%)" else "Shortage Alert",
-                                        color = pctColor,
-                                        fontWeight = FontWeight.Bold,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
                             }
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "${stats.first} Present out of ${stats.second} recorded sessions",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = studentName,
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontSize = 17.sp,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = Color(0xFF10B981).copy(alpha = 0.14f),
+                                        border = BorderStroke(0.8.dp, Color(0xFF10B981).copy(alpha = 0.32f))
+                                    ) {
+                                        Text(
+                                            text = "Student",
+                                            color = Color(0xFF059669),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(2.dp))
+
+                                Text(
+                                    text = branch,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
 
-                        // Visual Mini Progress Ring or Indicator
-                        Box(contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(
-                                progress = { (stats.third / 100f).coerceIn(0f, 1f) },
-                                modifier = Modifier.size(44.dp),
-                                strokeWidth = 5.dp,
-                                color = if (stats.third >= 75f) Color(0xFF10B981) else Color(0xFFEF4444),
-                                trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
-                            )
-                            Icon(
-                                imageVector = if (stats.third >= 75f) Icons.Default.Check else Icons.Default.Warning,
-                                contentDescription = null,
-                                tint = if (stats.third >= 75f) Color(0xFF10B981) else Color(0xFFEF4444),
-                                modifier = Modifier.size(18.dp)
+                        Spacer(modifier = Modifier.height(14.dp))
+                        HorizontalDivider(
+                            color = if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.6f) else Color(0xFFF1F5F9),
+                            thickness = 1.dp
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // 2. OVERALL ATTENDANCE STATS ROW
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = if (overallTotal > 0) "${String.format(Locale.ENGLISH, "%.1f", animatedOverallPct)}%" else "—",
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        fontWeight = FontWeight.Black,
+                                        color = overallColor
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = overallColor.copy(alpha = 0.14f),
+                                        border = BorderStroke(0.8.dp, overallColor.copy(alpha = 0.32f))
+                                    ) {
+                                        Text(
+                                            text = when {
+                                                overallTotal == 0 -> "No sessions yet"
+                                                overallPct >= 75f -> "Eligible (≥75%)"
+                                                overallPct >= 50f -> "Borderline"
+                                                else -> "Shortage Alert"
+                                            },
+                                            color = overallColor,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Text(
+                                    text = "$overallPresent attended out of $overallTotal recorded sessions across all subjects",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            // Circular progress indicator with ambient glow
+                            Box(
+                                modifier = Modifier.size(54.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(46.dp)
+                                        .clip(CircleShape)
+                                        .background(overallColor.copy(alpha = 0.12f))
+                                )
+                                CircularProgressIndicator(
+                                    progress = { if (overallTotal > 0) (animatedOverallPct / 100f).coerceIn(0f, 1f) else 0f },
+                                    modifier = Modifier.size(52.dp),
+                                    strokeWidth = 5.5.dp,
+                                    color = overallColor,
+                                    trackColor = if (isDarkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)
+                                )
+                                Icon(
+                                    imageVector = if (overallTotal == 0) Icons.Default.Event else if (overallPct >= 75f) Icons.Default.Check else Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = overallColor,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(
+                            color = if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.5f) else Color(0xFFF1F5F9),
+                            thickness = 1.dp
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // 3. Bottom health indicator & subject navigation prompt
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            if (atRiskSubjectsCount > 0) {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color(0xFFEF4444).copy(alpha = 0.12f),
+                                    border = BorderStroke(0.8.dp, Color(0xFFEF4444).copy(alpha = 0.30f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Warning,
+                                            contentDescription = null,
+                                            tint = Color(0xFFEF4444),
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "$atRiskSubjectsCount subject${if (atRiskSubjectsCount > 1) "s" else ""} at risk (<75%)",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFEF4444)
+                                        )
+                                    }
+                                }
+                            } else if (totalSubjectsWithSessions > 0) {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color(0xFF10B981).copy(alpha = 0.12f),
+                                    border = BorderStroke(0.8.dp, Color(0xFF10B981).copy(alpha = 0.30f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = Color(0xFF10B981),
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "All $totalSubjectsWithSessions subjects on track (≥75%)",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF10B981)
+                                        )
+                                    }
+                                }
+                            } else {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Event,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.outline,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Ready to record sessions",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.outline
+                                        )
+                                    }
+                                }
+                            }
+
+                            Text(
+                                text = "Tap a subject below for details ›",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
@@ -382,9 +609,13 @@ fun StudentAttendanceReportScreen(
                                             modifier = Modifier
                                                 .width(cellWidth)
                                                 .fillMaxHeight()
-                                                .border(0.5.dp, gridBorderColor)
+                                                .border(
+                                                    0.5.dp,
+                                                    if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.25f)
+                                                    else Color(0xFFE2E8F0).copy(alpha = 0.5f)
+                                                )
                                                 .background(
-                                                    if (isToday) MaterialTheme.colorScheme.primary.copy(alpha = 0.04f)
+                                                    if (isToday) Color(0xFF6366F1).copy(alpha = 0.04f)
                                                     else Color.Transparent
                                                 )
                                                 .clickable(enabled = hasSlot || true) {
@@ -396,72 +627,132 @@ fun StudentAttendanceReportScreen(
                                         ) {
                                             when (status) {
                                                 "P", "PRESENT" -> {
-                                                    Surface(
-                                                        shape = RoundedCornerShape(8.dp),
-                                                        color = Color(0xFF10B981).copy(alpha = 0.18f),
-                                                        border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.4f)),
-                                                        modifier = Modifier.size(34.dp)
-                                                    ) {
-                                                        Box(contentAlignment = Alignment.Center) {
-                                                            Text(
-                                                                text = "P",
-                                                                color = Color(0xFF059669),
-                                                                fontWeight = FontWeight.ExtraBold,
-                                                                fontSize = 14.sp
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(34.dp)
+                                                            .shadow(
+                                                                elevation = 3.dp,
+                                                                shape = RoundedCornerShape(10.dp),
+                                                                spotColor = Color(0xFF10B981).copy(alpha = 0.45f)
                                                             )
-                                                        }
+                                                            .clip(RoundedCornerShape(10.dp))
+                                                            .background(
+                                                                Brush.linearGradient(
+                                                                    listOf(Color(0xFF10B981), Color(0xFF059669))
+                                                                )
+                                                            )
+                                                            .border(
+                                                                width = 1.dp,
+                                                                brush = Brush.linearGradient(
+                                                                    listOf(Color.White.copy(alpha = 0.55f), Color.White.copy(alpha = 0.15f))
+                                                                ),
+                                                                shape = RoundedCornerShape(10.dp)
+                                                            ),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Text(
+                                                            text = "P",
+                                                            color = Color.White,
+                                                            fontWeight = FontWeight.Black,
+                                                            fontSize = 14.sp
+                                                        )
                                                     }
                                                 }
                                                 "A", "ABSENT" -> {
-                                                    Surface(
-                                                        shape = RoundedCornerShape(8.dp),
-                                                        color = Color(0xFFEF4444).copy(alpha = 0.18f),
-                                                        border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.4f)),
-                                                        modifier = Modifier.size(34.dp)
-                                                    ) {
-                                                        Box(contentAlignment = Alignment.Center) {
-                                                            Text(
-                                                                text = "A",
-                                                                color = Color(0xFFDC2626),
-                                                                fontWeight = FontWeight.ExtraBold,
-                                                                fontSize = 14.sp
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(34.dp)
+                                                            .shadow(
+                                                                elevation = 3.dp,
+                                                                shape = RoundedCornerShape(10.dp),
+                                                                spotColor = Color(0xFFEF4444).copy(alpha = 0.45f)
                                                             )
-                                                        }
+                                                            .clip(RoundedCornerShape(10.dp))
+                                                            .background(
+                                                                Brush.linearGradient(
+                                                                    listOf(Color(0xFFEF4444), Color(0xFFDC2626))
+                                                                )
+                                                            )
+                                                            .border(
+                                                                width = 1.dp,
+                                                                brush = Brush.linearGradient(
+                                                                    listOf(Color.White.copy(alpha = 0.55f), Color.White.copy(alpha = 0.15f))
+                                                                ),
+                                                                shape = RoundedCornerShape(10.dp)
+                                                            ),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Text(
+                                                            text = "A",
+                                                            color = Color.White,
+                                                            fontWeight = FontWeight.Black,
+                                                            fontSize = 14.sp
+                                                        )
                                                     }
                                                 }
                                                 "L", "LATE" -> {
-                                                    Surface(
-                                                        shape = RoundedCornerShape(8.dp),
-                                                        color = Color(0xFFF59E0B).copy(alpha = 0.18f),
-                                                        border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.4f)),
-                                                        modifier = Modifier.size(34.dp)
-                                                    ) {
-                                                        Box(contentAlignment = Alignment.Center) {
-                                                            Text(
-                                                                text = "L",
-                                                                color = Color(0xFFD97706),
-                                                                fontWeight = FontWeight.ExtraBold,
-                                                                fontSize = 14.sp
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(34.dp)
+                                                            .shadow(
+                                                                elevation = 3.dp,
+                                                                shape = RoundedCornerShape(10.dp),
+                                                                spotColor = Color(0xFFF59E0B).copy(alpha = 0.45f)
                                                             )
-                                                        }
+                                                            .clip(RoundedCornerShape(10.dp))
+                                                            .background(
+                                                                Brush.linearGradient(
+                                                                    listOf(Color(0xFFF59E0B), Color(0xFFD97706))
+                                                                )
+                                                            )
+                                                            .border(
+                                                                width = 1.dp,
+                                                                brush = Brush.linearGradient(
+                                                                    listOf(Color.White.copy(alpha = 0.55f), Color.White.copy(alpha = 0.15f))
+                                                                ),
+                                                                shape = RoundedCornerShape(10.dp)
+                                                            ),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Text(
+                                                            text = "L",
+                                                            color = Color.White,
+                                                            fontWeight = FontWeight.Black,
+                                                            fontSize = 14.sp
+                                                        )
                                                     }
                                                 }
                                                 else -> {
                                                     if (hasSlot) {
                                                         Box(
-                                                            modifier = Modifier
-                                                                .size(8.dp)
-                                                                .clip(CircleShape)
-                                                                .background(
-                                                                    if (isToday) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                                                                    else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
-                                                                )
-                                                        )
+                                                            modifier = Modifier.size(20.dp),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .size(16.dp)
+                                                                    .clip(CircleShape)
+                                                                    .background(
+                                                                        if (isToday) Color(0xFF6366F1).copy(alpha = 0.15f)
+                                                                        else Color(0xFF94A3B8).copy(alpha = 0.12f)
+                                                                    )
+                                                            )
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .size(7.dp)
+                                                                    .clip(CircleShape)
+                                                                    .background(
+                                                                        if (isToday) Color(0xFF6366F1)
+                                                                        else if (isDarkTheme) Color(0xFF64748B) else Color(0xFF94A3B8)
+                                                                    )
+                                                            )
+                                                        }
                                                     } else {
                                                         Text(
-                                                            text = "-",
-                                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                                                            fontSize = 14.sp
+                                                            text = "·",
+                                                            color = if (isDarkTheme) Color(0xFF475569) else Color(0xFFCBD5E1),
+                                                            fontSize = 18.sp,
+                                                            fontWeight = FontWeight.Bold
                                                         )
                                                     }
                                                 }
@@ -480,24 +771,79 @@ fun StudentAttendanceReportScreen(
                             .height(headerHeight)
                             .padding(start = leftColWidth)
                             .horizontalScroll(hScroll)
-                            .background(MaterialTheme.colorScheme.surface)
+                            .background(if (isDarkTheme) Color(0xFF0F172A) else Color(0xFFF8FAFC))
                             .shadow(2.dp)
                     ) {
-                        Row(modifier = Modifier.fillMaxHeight()) {
-                            generatedDates.forEach { date ->
+                        Row(
+                            modifier = Modifier.fillMaxHeight(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            generatedDates.forEachIndexed { dateIdx, date ->
                                 val isToday = date == today
                                 val dayName = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH)
                                 val monthName = date.month.getDisplayName(TextStyle.SHORT, Locale.ENGLISH)
+
+                                val interactionSource = remember { MutableInteractionSource() }
+                                val isPressed by interactionSource.collectIsPressedAsState()
+                                val scale by animateFloatAsState(
+                                    targetValue = if (isPressed) 0.94f else if (isToday) 1.02f else 1f,
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                        stiffness = Spring.StiffnessMedium
+                                    ),
+                                    label = "datePressScale"
+                                )
 
                                 Box(
                                     modifier = Modifier
                                         .width(cellWidth)
                                         .fillMaxHeight()
-                                        .border(0.5.dp, gridBorderColor)
+                                        .padding(horizontal = 3.dp, vertical = 3.dp)
+                                        .graphicsLayer {
+                                            scaleX = scale
+                                            scaleY = scale
+                                        }
+                                        .shadow(
+                                            elevation = if (isToday) 6.dp else if (isPressed) 1.dp else 2.dp,
+                                            shape = RoundedCornerShape(16.dp),
+                                            spotColor = if (isToday) Color(0xFF6366F1).copy(alpha = 0.50f) else Color.Black.copy(alpha = 0.08f)
+                                        )
+                                        .clip(RoundedCornerShape(16.dp))
                                         .background(
-                                            if (isToday) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                                            else MaterialTheme.colorScheme.surface
-                                        ),
+                                            if (isToday) {
+                                                Brush.verticalGradient(
+                                                    listOf(Color(0xFF4F46E5), Color(0xFF6366F1))
+                                                )
+                                            } else {
+                                                Brush.verticalGradient(
+                                                    if (isDarkTheme) listOf(Color(0xFF1E293B), Color(0xFF1E293B))
+                                                    else listOf(Color.White, Color(0xFFF8FAFC))
+                                                )
+                                            }
+                                        )
+                                        .border(
+                                            width = 1.dp,
+                                            brush = if (isToday) {
+                                                Brush.linearGradient(
+                                                    listOf(Color.White.copy(alpha = 0.6f), Color.White.copy(alpha = 0.2f))
+                                                )
+                                            } else {
+                                                Brush.linearGradient(
+                                                    if (isDarkTheme) listOf(Color(0xFF334155), Color(0xFF1E293B))
+                                                    else listOf(Color(0xFFE2E8F0), Color(0xFFF1F5F9))
+                                                )
+                                            },
+                                            shape = RoundedCornerShape(16.dp)
+                                        )
+                                        .clickable(
+                                            interactionSource = interactionSource,
+                                            indication = null
+                                        ) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            coroutineScope.launch {
+                                                hScroll.animateScrollTo((dateIdx * cellWidthPx).toInt())
+                                            }
+                                        },
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Column(
@@ -507,28 +853,29 @@ fun StudentAttendanceReportScreen(
                                         Text(
                                             text = dayName,
                                             fontWeight = if (isToday) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                            fontSize = 12.sp,
-                                            color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            fontSize = 11.sp,
+                                            color = if (isToday) Color.White.copy(alpha = 0.85f) else Color(0xFF64748B)
                                         )
                                         Spacer(modifier = Modifier.height(2.dp))
                                         Text(
                                             text = date.dayOfMonth.toString(),
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 15.sp,
-                                            color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            fontWeight = FontWeight.Black,
+                                            fontSize = 16.sp,
+                                            color = if (isToday) Color.White else MaterialTheme.colorScheme.onSurface
                                         )
                                         Text(
                                             text = monthName,
                                             fontSize = 10.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                            fontWeight = FontWeight.Medium,
+                                            color = if (isToday) Color.White.copy(alpha = 0.75f) else Color(0xFF94A3B8)
                                         )
                                         if (isToday) {
                                             Spacer(modifier = Modifier.height(2.dp))
                                             Box(
                                                 modifier = Modifier
-                                                    .size(4.dp)
+                                                    .size(5.dp)
                                                     .clip(CircleShape)
-                                                    .background(MaterialTheme.colorScheme.primary)
+                                                    .background(Color.White)
                                             )
                                         }
                                     }
@@ -544,8 +891,8 @@ fun StudentAttendanceReportScreen(
                             .fillMaxHeight()
                             .padding(top = headerHeight)
                             .verticalScroll(vScroll)
-                            .background(MaterialTheme.colorScheme.surface)
-                            .shadow(2.dp)
+                            .background(if (isDarkTheme) Color(0xFF0F172A) else Color(0xFFF8FAFC))
+                            .shadow(3.dp)
                     ) {
                         Column {
                             filteredCourses.forEachIndexed { index, course ->
@@ -555,60 +902,180 @@ fun StudentAttendanceReportScreen(
                                         it.scheduleSlotId.contains(course.id)
                                     )
                                 }
-                                val presentCount = courseAttendance.count { it.status.equals("P", ignoreCase = true) }
+                                val presentCount = courseAttendance.count { it.status.equals("P", ignoreCase = true) || it.status.equals("present", ignoreCase = true) }
                                 val totalCount = courseAttendance.size
                                 val coursePct = if (totalCount > 0) (presentCount * 100f) / totalCount else 0f
-                                val isSafe = coursePct >= 75f
+                                val statusColor = when {
+                                    totalCount == 0 -> Color(0xFF64748B)
+                                    coursePct >= 75f -> Color(0xFF10B981)
+                                    coursePct >= 50f -> Color(0xFFF59E0B)
+                                    else -> Color(0xFFEF4444)
+                                }
+
+                                val interactionSource = remember { MutableInteractionSource() }
+                                val isPressed by interactionSource.collectIsPressedAsState()
+                                val scale by animateFloatAsState(
+                                    targetValue = if (isPressed) 0.96f else 1f,
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                        stiffness = Spring.StiffnessMedium
+                                    ),
+                                    label = "courseRowScale"
+                                )
+                                val chevronOffset by animateDpAsState(
+                                    targetValue = if (isPressed) 3.dp else 0.dp,
+                                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+                                    label = "chevronOffset"
+                                )
+
+                                var isRowLoaded by remember { mutableStateOf(false) }
+                                LaunchedEffect(Unit) { isRowLoaded = true }
+                                val animatedBarPct by animateFloatAsState(
+                                    targetValue = if (isRowLoaded && totalCount > 0) coursePct else 0f,
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                        stiffness = Spring.StiffnessLow
+                                    ),
+                                    label = "barPctAnim"
+                                )
 
                                 Box(
                                     modifier = Modifier
                                         .width(leftColWidth)
                                         .height(rowHeight)
-                                        .border(0.5.dp, gridBorderColor)
-                                        .background(
-                                            if (index % 2 == 0) MaterialTheme.colorScheme.surface
-                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                                        .graphicsLayer {
+                                            scaleX = scale
+                                            scaleY = scale
+                                        }
+                                        .shadow(
+                                            elevation = if (isPressed) 1.dp else 3.dp,
+                                            shape = RoundedCornerShape(18.dp),
+                                            spotColor = statusColor.copy(alpha = 0.20f)
                                         )
-                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                        .clip(RoundedCornerShape(18.dp))
+                                        .background(
+                                            if (isPressed) statusColor.copy(alpha = 0.08f)
+                                            else if (isDarkTheme) Color(0xFF1E293B)
+                                            else Color.White
+                                        )
+                                        .border(
+                                            width = 1.dp,
+                                            color = if (isPressed) statusColor.copy(alpha = 0.50f)
+                                            else if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.6f)
+                                            else Color(0xFFE2E8F0),
+                                            shape = RoundedCornerShape(18.dp)
+                                        )
+                                        .clickable(
+                                            interactionSource = interactionSource,
+                                            indication = null,
+                                            onClick = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                navController.navigate("student_subject_detail/${course.id}")
+                                            }
+                                        )
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
                                     contentAlignment = Alignment.CenterStart
                                 ) {
-                                    Column(verticalArrangement = Arrangement.Center) {
-                                        Text(
-                                            text = course.name,
-                                            fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Spacer(modifier = Modifier.height(2.dp))
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                text = course.code.ifBlank { "Course" },
+                                                text = course.name,
+                                                fontWeight = FontWeight.Bold,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Default.ChevronRight,
+                                                contentDescription = "Open subject details",
+                                                modifier = Modifier
+                                                    .size(16.dp)
+                                                    .offset(x = chevronOffset),
+                                                tint = if (isPressed) statusColor else Color(0xFF94A3B8)
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.height(6.dp))
+
+                                        // Mini animated gradient progress bar
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(5.dp)
+                                                .clip(CircleShape)
+                                                .background(if (isDarkTheme) Color(0xFF334155) else Color(0xFFE2E8F0))
+                                        ) {
+                                            if (totalCount > 0) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth(fraction = (animatedBarPct / 100f).coerceIn(0f, 1f))
+                                                        .fillMaxHeight()
+                                                        .clip(CircleShape)
+                                                        .background(
+                                                            Brush.horizontalGradient(
+                                                                listOf(statusColor.copy(alpha = 0.8f), statusColor)
+                                                            )
+                                                        )
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(6.dp))
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = course.code.ifBlank { "Subject" },
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                color = Color(0xFF64748B),
+                                                fontWeight = FontWeight.Medium
                                             )
                                             if (totalCount > 0) {
-                                                Text(
-                                                    text = "${coursePct.toInt()}%",
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    color = if (isSafe) Color(0xFF10B981) else Color(0xFFEF4444)
-                                                )
+                                                Surface(
+                                                    shape = RoundedCornerShape(7.dp),
+                                                    color = statusColor.copy(alpha = 0.12f),
+                                                    border = BorderStroke(0.8.dp, statusColor.copy(alpha = 0.30f))
+                                                ) {
+                                                    Text(
+                                                        text = "${animatedBarPct.toInt()}%",
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Black,
+                                                        color = statusColor,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
                                             } else {
-                                                Text(
-                                                    text = "New",
-                                                    fontSize = 10.sp,
-                                                    color = MaterialTheme.colorScheme.outline
-                                                )
+                                                Surface(
+                                                    shape = RoundedCornerShape(7.dp),
+                                                    color = (if (isDarkTheme) Color(0xFF334155) else Color(0xFFF1F5F9)).copy(alpha = 0.8f),
+                                                    border = BorderStroke(0.8.dp, Color(0xFFCBD5E1).copy(alpha = 0.4f))
+                                                ) {
+                                                    Text(
+                                                        text = "No sessions",
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = Color(0xFF94A3B8),
+                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                                    )
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
+                            Spacer(modifier = Modifier.height(100.dp))
                         }
                     }
 
@@ -616,29 +1083,62 @@ fun StudentAttendanceReportScreen(
                     Box(
                         modifier = Modifier
                             .size(width = leftColWidth, height = headerHeight)
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(0.5.dp, gridBorderColor)
-                            .shadow(4.dp)
-                            .padding(12.dp),
+                            .background(if (isDarkTheme) Color(0xFF0F172A) else Color(0xFFF8FAFC))
+                            .border(
+                                1.dp,
+                                if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.5f) else Color(0xFFE2E8F0)
+                            )
+                            .shadow(3.dp)
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
                         Column {
                             Text(
                                 text = "Enrolled Courses",
-                                fontWeight = FontWeight.ExtraBold,
+                                fontWeight = FontWeight.Black,
                                 style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.primary
+                                color = Color(0xFF4F46E5)
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "${filteredCourses.size} Subjects",
+                                text = "Tap row for full details ›",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                fontSize = 10.sp,
+                                color = Color(0xFF64748B)
                             )
                         }
                     }
                 }
             }
+
+            // 5. FLOATING FROSTED GLASS BAR FOR STUDENT NAVIGATION
+            FloatingGlassNavBar(
+                selectedTabIndex = 1,
+                onTabSelected = { tabIdx ->
+                    when (tabIdx) {
+                        0 -> navController.navigate("student_dashboard") {
+                            popUpTo("student_dashboard") { inclusive = false }
+                        }
+                        1 -> { /* Already in register */ }
+                        4 -> navController.navigate("profile")
+                    }
+                },
+                onNavigateSchedule = {
+                    navController.navigate("student_dashboard") {
+                        popUpTo("student_dashboard") { inclusive = false }
+                    }
+                },
+                onNavigateAIImport = {},
+                onNavigateAddClass = {},
+                onNavigateManageClasses = {},
+                onNavigateProfile = { navController.navigate("profile") },
+                isDarkTheme = isDarkTheme,
+                role = "student",
+                onNavigateReport = {},
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+            )
         }
     }
 
