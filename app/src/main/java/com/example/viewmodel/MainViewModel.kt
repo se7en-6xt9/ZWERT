@@ -33,7 +33,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import java.time.LocalDate
+import java.io.File
+import com.example.util.ExportOptions
+import com.example.util.ExportFormat
+import com.example.util.AttendanceExportHelper
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val auth: FirebaseAuth? by lazy {
@@ -1880,6 +1886,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun searchStudents(courseId: String, query: String) = repository.searchStudents(courseId, query)
     fun getAttendanceCountForCourse(courseId: String) = repository.getAttendanceCountForCourse(courseId)
     fun getDistinctAttendanceDatesForCourse(courseId: String) = repository.getDistinctAttendanceDatesForCourse(courseId)
+
+    fun exportAttendanceData(
+        context: Context,
+        courseId: String,
+        options: ExportOptions,
+        onComplete: (File?) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val course = repository.getCourseById(courseId)
+                val students = repository.getStudentsByCourseSync(courseId)
+                val allRecords = repository.getAttendanceForCourseSync(courseId)
+                
+                val file = withContext(Dispatchers.IO) {
+                    AttendanceExportHelper.exportAttendance(
+                        context = context,
+                        course = course,
+                        students = students,
+                        attendanceRecords = allRecords,
+                        options = options
+                    )
+                }
+                onComplete(file)
+            } catch (e: Exception) {
+                Log.e("Export", "Export failed", e)
+                onComplete(null)
+            }
+        }
+    }
 
     fun markAllStudentsAttendance(date: String, slotId: String, studentIds: List<String>, status: String, courseId: String? = null) {
         viewModelScope.launch {

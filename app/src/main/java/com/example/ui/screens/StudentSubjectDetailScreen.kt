@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -401,7 +402,12 @@ fun StudentSubjectDetailScreen(
                     )
                 }
             } else {
-                items(filteredRecords, key = { "${it.date}_${it.scheduleSlotId}" }) { record ->
+                itemsIndexed(
+                    filteredRecords,
+                    key = { index, record ->
+                        "${record.id}_${record.date}_${record.scheduleSlotId}_${record.studentId}_$index"
+                    }
+                ) { _, record ->
                     val slot = allSlots.find { it.id == record.scheduleSlotId }
                     SessionHistoryItem(
                         record = record,
@@ -859,7 +865,7 @@ fun SubjectScheduleSlotsRow(
         )
         Spacer(modifier = Modifier.height(8.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(slots) { slot ->
+            itemsIndexed(slots, key = { index, slot -> "${slot.id}_$index" }) { _, slot ->
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = if (isDarkTheme) Color(0xFF1E293B) else Color(0xFFEEF2FF),

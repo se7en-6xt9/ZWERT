@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.clickable
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
@@ -285,6 +287,39 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                         Column {
                             Text("Role", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text("Faculty Member", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                    
+                    val isSyncing by viewModel.isSyncing.collectAsState()
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (!isSyncing) {
+                                    viewModel.manualFullSync { success, message ->
+                                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                            .padding(8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.CloudSync, 
+                                contentDescription = "Manual Sync", 
+                                tint = if (isSyncing) Color.Gray else MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column {
+                                Text("Cloud Synchronization", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (isSyncing) "Syncing in progress..." else "Sync Now", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = if (isSyncing) Color.Gray else MaterialTheme.colorScheme.onSurface)
+                            }
+                        }
+                        if (isSyncing) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                         }
                     }
                 }

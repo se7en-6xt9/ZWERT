@@ -31,6 +31,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
+import com.example.util.AttendanceExportHelper
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -69,9 +72,9 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
     var searchQuery by remember { mutableStateOf("") }
     var showSearchBar by remember { mutableStateOf(false) }
 
-    // Dynamic bidirectional infinite scroll range state
-    var pastDaysCount by remember { mutableIntStateOf(60) }
-    var futureDaysCount by remember { mutableIntStateOf(30) }
+    // Dynamic bidirectional infinite scroll range state - Initialized to 15 days past and 15 days future as requested
+    var pastDaysCount by remember { mutableIntStateOf(15) }
+    var futureDaysCount by remember { mutableIntStateOf(15) }
 
     LaunchedEffect(courseId) {
         course = viewModel.getCourseById(courseId)
@@ -86,24 +89,29 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
         }
     }
 
-    // Dynamic generation of date sessions with slots
-    val generatedDates = remember(slots, pastDaysCount, futureDaysCount) {
+    // Precomputed column information to eliminate formatting and calculation overhead inside the grid loop
+    val dateColumns = remember(slots, pastDaysCount, futureDaysCount) {
         val today = LocalDate.now()
-        val list = mutableListOf<Pair<LocalDate, ScheduleSlotEntity>>()
+        val list = ArrayList<DateColumnInfo>()
         val daySlotMap = slots.groupBy { it.dayOfWeek.trim().lowercase() }
+        val dayPattern = DateTimeFormatter.ofPattern("dd MMM")
+        val dayYearPattern = DateTimeFormatter.ofPattern("dd MMM ''yy")
 
         for (i in -pastDaysCount.toLong()..futureDaysCount.toLong()) {
             val d = today.plusDays(i)
             val fullDay = d.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH).lowercase()
             val shortDay = d.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).lowercase()
+            val isToday = d == today
+            val dateStr = d.format(DateTimeFormatter.ISO_LOCAL_DATE)
+            val dayName = d.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).uppercase()
+            val dateFormatted = d.format(if (d.year == today.year) dayPattern else dayYearPattern)
 
             val matchingSlots = daySlotMap[fullDay] ?: daySlotMap[shortDay]
             if (!matchingSlots.isNullOrEmpty()) {
                 matchingSlots.forEach { slot ->
-                    list.add(Pair(d, slot))
+                    list.add(DateColumnInfo(d, slot, dateStr, isToday, dayName, dateFormatted))
                 }
             } else if (slots.isEmpty()) {
-                // If course has no slots yet, generate one default daily column
                 val defaultSlot = ScheduleSlotEntity(
                     id = "default_${d}_$courseId",
                     courseId = courseId,
@@ -113,10 +121,31 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                     room = "",
                     section = ""
                 )
-                list.add(Pair(d, defaultSlot))
+                list.add(DateColumnInfo(d, defaultSlot, dateStr, isToday, dayName, dateFormatted))
             }
         }
         list
+    }
+
+    // High-performance O(1) status lookup map: (studentId_dateStr_slotId) -> status string
+    val attendanceStatusMap = remember(attendance) {
+        val map = HashMap<String, String>(attendance.size + 16)
+        for (rec in attendance) {
+            map["${rec.studentId}_${rec.date}_${rec.scheduleSlotId}"] = rec.status
+        }
+        map
+    }
+
+    // High-performance O(1) student summary statistics map: studentId -> Pair(presentCount, totalRecorded)
+    val studentStatsMap = remember(attendance, students) {
+        val map = HashMap<String, Pair<Int, Int>>(students.size + 16)
+        val byStudent = attendance.groupBy { it.studentId }
+        for (s in students) {
+            val records = byStudent[s.id] ?: emptyList()
+            val pCount = records.count { it.status == "P" || it.status == "L" }
+            map[s.id] = Pair(pCount, records.size)
+        }
+        map
     }
 
     // Excel Grid Dimensions
@@ -132,30 +161,38 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
 
     // Default to Today's column as the first visible/leftmost column on initial load
     var hasScrolledToToday by remember { mutableStateOf(false) }
-    LaunchedEffect(generatedDates) {
-        if (!hasScrolledToToday && generatedDates.isNotEmpty()) {
+    LaunchedEffect(dateColumns) {
+        if (!hasScrolledToToday && dateColumns.isNotEmpty()) {
             val today = LocalDate.now()
-            val todayIdx = generatedDates.indexOfFirst { it.first == today }
+            val todayIdx = dateColumns.indexOfFirst { it.date == today }
             val targetIdx = if (todayIdx >= 0) todayIdx else {
-                // Closest date to today
-                generatedDates.indexOfFirst { !it.first.isBefore(today) }.takeIf { it >= 0 } ?: 0
+                dateColumns.indexOfFirst { !it.date.isBefore(today) }.takeIf { it >= 0 } ?: 0
             }
             hScroll.scrollTo((targetIdx * cellWidthPx).toInt())
             hasScrolledToToday = true
         }
     }
 
-    // Dynamic bidirectional loading as user approaches edges
+    // Dynamic bidirectional loading as user approaches edges (15 days increment)
+    var isExtendingDates by remember { mutableStateOf(false) }
     LaunchedEffect(hScroll.value, hScroll.maxValue) {
-        // Approaching right edge (future dates)
-        if (hScroll.maxValue > 0 && hScroll.value > hScroll.maxValue - (cellWidthPx * 4)) {
-            futureDaysCount += 20
-        }
-        // Approaching left edge (past dates)
-        if (hScroll.value < (cellWidthPx * 3) && pastDaysCount < 180) {
-            val prevPastDays = pastDaysCount
-            pastDaysCount += 20
-            // Scroll offset adjustment is handled naturally by position
+        if (hScroll.maxValue > 0 && !isExtendingDates) {
+            // Approaching right edge (future dates)
+            if (hScroll.value > hScroll.maxValue - (cellWidthPx * 3)) {
+                if (futureDaysCount < 120) {
+                    isExtendingDates = true
+                    futureDaysCount += 15
+                    isExtendingDates = false
+                }
+            }
+            // Approaching left edge (past dates)
+            else if (hScroll.value < (cellWidthPx * 2)) {
+                if (pastDaysCount < 120) {
+                    isExtendingDates = true
+                    pastDaysCount += 15
+                    isExtendingDates = false
+                }
+            }
         }
     }
 
@@ -170,14 +207,13 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                     showDatePicker = false
                     datePickerState.selectedDateMillis?.let { millis ->
                         val selectedDate = Instant.ofEpochMilli(millis).atZone(ZoneId.of("UTC")).toLocalDate()
-                        val idx = generatedDates.indexOfFirst { it.first == selectedDate }
+                        val idx = dateColumns.indexOfFirst { it.date == selectedDate }
                         if (idx >= 0) {
                             coroutineScope.launch { hScroll.animateScrollTo((idx * cellWidthPx).toInt()) }
                         } else {
-                            // Expand range to include chosen date
                             val diff = java.time.temporal.ChronoUnit.DAYS.between(LocalDate.now(), selectedDate)
-                            if (diff < 0) pastDaysCount = (-diff + 15).toInt()
-                            else futureDaysCount = (diff + 15).toInt()
+                            if (diff < 0) pastDaysCount = (-diff + 15).toInt().coerceAtMost(180)
+                            else futureDaysCount = (diff + 15).toInt().coerceAtMost(180)
                         }
                     }
                 }) { Text("Jump to Date", fontWeight = FontWeight.Bold) }
@@ -192,6 +228,10 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
 
     // Cell Detail & Correction BottomSheet State
     var activeCellDetail by remember { mutableStateOf<CellDetailData?>(null) }
+    
+    var showExportDialog by remember { mutableStateOf(false) }
+    var isExporting by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     MaterialTheme(
         colorScheme = lightColorScheme(
@@ -232,7 +272,7 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                         FilledTonalButton(
                             onClick = {
                                 val today = LocalDate.now()
-                                val todayIdx = generatedDates.indexOfFirst { it.first == today }
+                                val todayIdx = dateColumns.indexOfFirst { it.date == today }
                                 if (todayIdx >= 0) {
                                     coroutineScope.launch {
                                         hScroll.animateScrollTo((todayIdx * cellWidthPx).toInt())
@@ -263,6 +303,11 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                         // Calendar Jump
                         IconButton(onClick = { showDatePicker = true }) {
                             Icon(Icons.Default.CalendarMonth, contentDescription = "Pick Date", tint = Color(0xFF0F172A))
+                        }
+                        
+                        // Export Button
+                        IconButton(onClick = { showExportDialog = true }) {
+                            Icon(Icons.Default.Share, contentDescription = "Export", tint = Color(0xFF0F172A))
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
@@ -368,14 +413,11 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                                 val studentRowBg = if (isZebra) Color(0xFFF8FAFC) else Color.White
 
                                 Row(modifier = Modifier.height(rowHeight)) {
-                                    generatedDates.forEach { (date, slot) ->
-                                        val isToday = date == LocalDate.now()
-                                        val dateStr = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
-                                        val record = attendance.find { it.studentId == student.id && it.date == dateStr && it.scheduleSlotId == slot.id }
-                                        val status = record?.status
+                                    dateColumns.forEach { col ->
+                                        val status = attendanceStatusMap["${student.id}_${col.dateStr}_${col.slot.id}"]
 
                                         val cellBg = when {
-                                            isToday -> if (isZebra) Color(0xFFF5F3FF) else Color(0xFFFAF5FF)
+                                            col.isToday -> if (isZebra) Color(0xFFF5F3FF) else Color(0xFFFAF5FF)
                                             else -> studentRowBg
                                         }
 
@@ -383,17 +425,17 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                                             modifier = Modifier
                                                 .size(width = cellWidth, height = rowHeight)
                                                 .background(cellBg)
-                                                .border(0.5.dp, if (isToday) Color(0xFFC4B5FD) else gridBorderColor)
-                                            .clickable {
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                activeCellDetail = CellDetailData(
-                                                    student = student,
-                                                    date = date,
-                                                    dateStr = dateStr,
-                                                    slot = slot,
-                                                    currentStatus = status
-                                                )
-                                            },
+                                                .border(0.5.dp, if (col.isToday) Color(0xFFC4B5FD) else gridBorderColor)
+                                                .clickable {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    activeCellDetail = CellDetailData(
+                                                        student = student,
+                                                        date = col.date,
+                                                        dateStr = col.dateStr,
+                                                        slot = col.slot,
+                                                        currentStatus = status
+                                                    )
+                                                },
                                             contentAlignment = Alignment.Center
                                         ) {
                                             if (status != null) {
@@ -448,17 +490,9 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                                 .horizontalScroll(hScroll)
                                 .height(headerHeight)
                         ) {
-                            generatedDates.forEach { (date, slot) ->
-                                val isToday = date == LocalDate.now()
-                                val dayName = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).uppercase()
-                                val dateFormatted = date.format(
-                                    DateTimeFormatter.ofPattern(
-                                        if (date.year == LocalDate.now().year) "dd MMM" else "dd MMM ''yy"
-                                    )
-                                )
-
-                                val headerBg = if (isToday) Color(0xFFF3E8FF) else Color(0xFFF8FAFC)
-                                val headerBorder = if (isToday) Color(0xFF8B5CF6) else gridBorderColor
+                            dateColumns.forEach { col ->
+                                val headerBg = if (col.isToday) Color(0xFFF3E8FF) else Color(0xFFF8FAFC)
+                                val headerBorder = if (col.isToday) Color(0xFF8B5CF6) else gridBorderColor
 
                                 Column(
                                     modifier = Modifier
@@ -469,7 +503,7 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                                     verticalArrangement = Arrangement.Center
                                 ) {
                                     // Top Accent Bar for Today
-                                    if (isToday) {
+                                    if (col.isToday) {
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -495,27 +529,27 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
 
                                     // STACKED DAY & DATE HEADERS (Clear and Unmistakable)
                                     Text(
-                                        text = dayName,
+                                        text = col.dayName,
                                         style = MaterialTheme.typography.labelSmall.copy(
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.ExtraBold,
                                             letterSpacing = 0.5.sp
                                         ),
-                                        color = if (isToday) Color(0xFF6D28D9) else Color(0xFF0F172A)
+                                        color = if (col.isToday) Color(0xFF6D28D9) else Color(0xFF0F172A)
                                     )
 
                                     Text(
-                                        text = dateFormatted,
+                                        text = col.dateFormatted,
                                         style = MaterialTheme.typography.labelSmall.copy(
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.SemiBold
                                         ),
-                                        color = if (isToday) Color(0xFF6D28D9) else Color(0xFF64748B)
+                                        color = if (col.isToday) Color(0xFF6D28D9) else Color(0xFF64748B)
                                     )
 
-                                    if (slot.startTime.isNotBlank() && slot.startTime != "Session") {
+                                    if (col.slot.startTime.isNotBlank() && col.slot.startTime != "Session") {
                                         Text(
-                                            text = slot.startTime,
+                                            text = col.slot.startTime,
                                             fontSize = 8.sp,
                                             color = Color(0xFF94A3B8),
                                             maxLines = 1
@@ -553,10 +587,8 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                                 val isZebra = rowIndex % 2 != 0
                                 val studentRowBg = if (isZebra) Color(0xFFF8FAFC) else Color.White
 
-                                // Calculate Att % based purely on saved database records
-                                val studentRecords = attendance.filter { it.studentId == student.id }
-                                val presentCount = studentRecords.count { it.status == "P" || it.status == "L" }
-                                val totalRecorded = studentRecords.size
+                                // Calculate Att % based purely on precomputed statistics map in O(1)
+                                val (presentCount, totalRecorded) = studentStatsMap[student.id] ?: Pair(0, 0)
                                 val percentage = if (totalRecorded > 0) {
                                     ((presentCount.toFloat() / totalRecorded) * 100).toInt()
                                 } else 0
@@ -851,6 +883,40 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
             }
         }
     }
+
+    if (showExportDialog) {
+        ExportAttendanceDialog(
+            onDismiss = { showExportDialog = false },
+            onExport = { options ->
+                showExportDialog = false
+                isExporting = true
+                viewModel.exportAttendanceData(context, courseId, options) { file ->
+                    isExporting = false
+                    if (file != null) {
+                        Toast.makeText(context, "Export successful", Toast.LENGTH_SHORT).show()
+                        AttendanceExportHelper.openExportedFile(context, file, options.format)
+                    } else {
+                        Toast.makeText(context, "Export failed", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        )
+    }
+
+    if (isExporting) {
+        AlertDialog(
+            onDismissRequest = { },
+            confirmButton = { },
+            title = { Text("Exporting...") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text("Generating export file...")
+                }
+            }
+        )
+    }
 }
 
 data class CellDetailData(
@@ -859,6 +925,15 @@ data class CellDetailData(
     val dateStr: String,
     val slot: ScheduleSlotEntity,
     val currentStatus: String?
+)
+
+data class DateColumnInfo(
+    val date: LocalDate,
+    val slot: ScheduleSlotEntity,
+    val dateStr: String,
+    val isToday: Boolean,
+    val dayName: String,
+    val dateFormatted: String
 )
 
 @Composable
