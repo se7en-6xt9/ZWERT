@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,18 +12,25 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -73,6 +81,7 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
     var attendanceMode by remember { mutableStateOf(AttendanceMode.LIST) }
     var cardIndex by remember { mutableIntStateOf(0) }
     var isSoundEnabled by remember { mutableStateOf(SoundFeedbackHelper.isSoundEnabled(context)) }
+    var isSessionInfoExpanded by remember { mutableStateOf(false) }
 
     var showDiscardDialog by remember { mutableStateOf(false) }
     var showSubmitSuccessDialog by remember { mutableStateOf(false) }
@@ -232,14 +241,14 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     color = Color.White,
-                    shadowElevation = 12.dp,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+                    shadowElevation = 8.dp,
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0))
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .navigationBarsPadding()
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -252,7 +261,7 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(8.dp)
+                                        .size(7.dp)
                                         .clip(CircleShape)
                                         .background(if (hasUnsavedChanges) Color(0xFFEA580C) else Color(0xFF10B981))
                                 )
@@ -272,7 +281,7 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         Button(
                             onClick = {
@@ -299,8 +308,8 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                             enabled = !isSubmitting && (markedCount > 0 || hasUnsavedChanges),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(50.dp),
-                            shape = RoundedCornerShape(14.dp),
+                                .height(46.dp),
+                            shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = Color(0xFF6750A4),
                                 disabledContainerColor = Color(0xFFE2E8F0),
@@ -309,19 +318,19 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                         ) {
                             if (isSubmitting) {
                                 CircularProgressIndicator(
-                                    modifier = Modifier.size(22.dp),
+                                    modifier = Modifier.size(20.dp),
                                     color = Color.White,
                                     strokeWidth = 2.5.dp
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text("Saving to Cloud & Local...", fontWeight = FontWeight.Bold)
                             } else {
-                                Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     if (hasUnsavedChanges) "Save & Submit Register" else "Attendance Submitted",
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp
+                                    fontSize = 14.5.sp
                                 )
                             }
                         }
@@ -334,57 +343,147 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                     .fillMaxSize()
                     .padding(paddingValues)
             ) {
-                // Session Info Card
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        val courseName = course?.name?.takeIf { it.isNotBlank() } ?: "Class Attendance"
-                        val courseCode = course?.code?.takeIf { it.isNotBlank() }
+                // Session Info Card (Full in List Mode or when expanded; Compact Strip in Card View)
+                val courseName = course?.name?.takeIf { it.isNotBlank() } ?: "Class Attendance"
+                val courseCode = course?.code?.takeIf { it.isNotBlank() }
+                val timeRange = "${slot?.startTime ?: ""} - ${slot?.endTime ?: ""}".trim()
+                val roomText = slot?.room ?: "Room"
+                val sectionText = if (!slot?.section.isNullOrBlank()) "Sec ${slot?.section}" else ""
 
-                        Row(verticalAlignment = Alignment.Top) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = courseName,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF0F172A)
-                                )
-                                if (!slot?.section.isNullOrBlank()) {
+                if (attendanceMode == AttendanceMode.LIST || isSessionInfoExpanded) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Section ${slot?.section}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFF64748B)
+                                        text = courseName,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF0F172A)
                                     )
+                                    if (sectionText.isNotBlank()) {
+                                        Text(
+                                            text = sectionText,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color(0xFF64748B)
+                                        )
+                                    }
+                                }
+                                if (!courseCode.isNullOrBlank()) {
+                                    Surface(
+                                        color = Color(0xFFEDE9FE),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text(
+                                            text = courseCode,
+                                            color = Color(0xFF6D28D9),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                                if (attendanceMode == AttendanceMode.CARD) {
+                                    IconButton(
+                                        onClick = { isSessionInfoExpanded = false },
+                                        modifier = Modifier.size(28.dp).padding(start = 4.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.ExpandLess,
+                                            contentDescription = "Collapse info",
+                                            tint = Color(0xFF64748B)
+                                        )
+                                    }
                                 }
                             }
-                            if (!courseCode.isNullOrBlank()) {
-                                Surface(
-                                    color = Color(0xFFEDE9FE),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Text(
-                                        text = courseCode,
-                                        color = Color(0xFF6D28D9),
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                InfoItem(icon = Icons.Default.Schedule, text = timeRange)
+                                InfoItem(icon = Icons.Default.LocationOn, text = roomText)
                             }
                         }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            InfoItem(icon = Icons.Default.Schedule, text = "${slot?.startTime ?: ""} - ${slot?.endTime ?: ""}")
-                            InfoItem(icon = Icons.Default.LocationOn, text = slot?.room ?: "Room")
+                    }
+                } else {
+                    // Sleek Compact Bar for Card View to preserve maximum height on small screens
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .clickable { isSessionInfoExpanded = true },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color.White,
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shadowElevation = 0.5.dp
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                if (!courseCode.isNullOrBlank()) {
+                                    Surface(
+                                        color = Color(0xFFEDE9FE),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = courseCode,
+                                            color = Color(0xFF6D28D9),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                }
+                                Text(
+                                    text = courseName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0F172A),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                if (sectionText.isNotBlank()) {
+                                    Text(
+                                        text = " • $sectionText",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF64748B),
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = if (roomText.isNotBlank()) roomText else timeRange,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF64748B),
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    Icons.Default.ExpandMore,
+                                    contentDescription = "Expand info",
+                                    tint = Color(0xFF94A3B8),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -576,11 +675,15 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                    .padding(horizontal = 12.dp, vertical = 4.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (students.isEmpty()) {
-                                    Text("No students in this class batch", color = Color.Gray)
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Icon(Icons.Default.PeopleOutline, contentDescription = null, tint = Color(0xFF94A3B8), modifier = Modifier.size(48.dp))
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("No students enrolled in this class batch", color = Color(0xFF64748B), style = MaterialTheme.typography.bodyMedium)
+                                    }
                                 } else if (cardIndex >= students.size) {
                                     // All students evaluated summary view
                                     CardEvaluationSummary(
@@ -597,10 +700,13 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                                     )
                                 } else {
                                     val currentStudent = students[cardIndex]
+                                    val nextStudent = if (cardIndex + 1 < students.size) students[cardIndex + 1] else null
                                     val currentStatus = localAttendance[currentStudent.id]
 
                                     SwipeableSingleStudentCard(
                                         student = currentStudent,
+                                        nextStudent = nextStudent,
+                                        localAttendance = localAttendance,
                                         status = currentStatus,
                                         currentIndex = cardIndex,
                                         totalCount = students.size,
@@ -749,12 +855,14 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
 }
 
 /**
- * Swipeable Card Component for Card View Mode
- * Supports smooth spring-physics swipe: Right -> Present, Left -> Absent, Tap -> Late
+ * Modern Responsive Swipeable Card Component for Card View Mode
+ * Automatically adapts to compact / small screen heights with stacked deck effect
  */
 @Composable
 fun SwipeableSingleStudentCard(
     student: StudentEntity,
+    nextStudent: StudentEntity?,
+    localAttendance: Map<String, String>,
     status: String?,
     currentIndex: Int,
     totalCount: Int,
@@ -764,297 +872,473 @@ fun SwipeableSingleStudentCard(
     onPreviousClick: () -> Unit,
     canGoPrevious: Boolean
 ) {
-    val configuration = LocalConfiguration.current
-    val density = LocalDensity.current
-    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
-    val swipeThreshold = screenWidthPx * 0.28f
-
+    val haptic = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
-    val offsetX = remember(student.id) { Animatable(0f) }
-    val offsetY = remember(student.id) { Animatable(0f) }
 
-    val rotation = (offsetX.value / screenWidthPx) * 20f
-    val rightProgress = (offsetX.value / swipeThreshold).coerceIn(0f, 1f)
-    val leftProgress = (-offsetX.value / swipeThreshold).coerceIn(0f, 1f)
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
     ) {
-        // Step Indicator Pill
-        Row(
-            modifier = Modifier.padding(bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Surface(
-                color = Color(0xFFEDE9FE),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Text(
-                    text = "Student ${currentIndex + 1} of $totalCount",
-                    color = Color(0xFF6D28D9),
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                )
-            }
-        }
+        val maxH = maxHeight
+        val maxW = maxWidth
+        val isSmallScreen = maxH < 490.dp
+        val isTinyScreen = maxH < 410.dp
 
-        // Swipeable Main Card
-        Box(
+        val density = LocalDensity.current
+        val screenWidthPx = with(density) { maxW.toPx() }
+        val swipeThreshold = screenWidthPx * 0.28f
+
+        // Dynamic card height calculation based on available container height
+        val cardHeight = when {
+            isTinyScreen -> 220.dp
+            isSmallScreen -> (maxH - 96.dp).coerceIn(230.dp, 290.dp)
+            else -> (maxH - 105.dp).coerceIn(280.dp, 350.dp)
+        }
+        val cardWidthFraction = if (isSmallScreen) 0.94f else 0.90f
+        val spacingBetweenCardAndButtons = if (isSmallScreen) 10.dp else 16.dp
+
+        val offsetX = remember(student.id) { Animatable(0f) }
+        val offsetY = remember(student.id) { Animatable(0f) }
+
+        val rotation = (offsetX.value / screenWidthPx) * 16f
+        val rightProgress = (offsetX.value / swipeThreshold).coerceIn(0f, 1f)
+        val leftProgress = (-offsetX.value / swipeThreshold).coerceIn(0f, 1f)
+        val dragFraction = kotlin.math.abs(offsetX.value) / swipeThreshold
+
+        Column(
             modifier = Modifier
-                .fillMaxWidth(0.92f)
-                .height(340.dp)
-                .offset { IntOffset(offsetX.value.roundToInt(), offsetY.value.roundToInt()) }
-                .rotate(rotation)
-                .pointerInput(student.id) {
-                    detectDragGestures(
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            coroutineScope.launch {
-                                offsetX.snapTo(offsetX.value + dragAmount.x)
-                                offsetY.snapTo(offsetY.value + dragAmount.y * 0.25f)
-                            }
-                        },
-                        onDragEnd = {
-                            coroutineScope.launch {
-                                if (offsetX.value > swipeThreshold) {
-                                    // Fling off to the right
-                                    offsetX.animateTo(screenWidthPx * 1.3f, tween(200))
-                                    onSwipeRight()
-                                } else if (offsetX.value < -swipeThreshold) {
-                                    // Fling off to the left
-                                    offsetX.animateTo(-screenWidthPx * 1.3f, tween(200))
-                                    onSwipeLeft()
-                                } else {
-                                    // Spring back smoothly
-                                    launch {
-                                        offsetX.animateTo(
-                                            0f,
-                                            spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
-                                        )
+                .fillMaxWidth()
+                .then(if (isTinyScreen) Modifier.verticalScroll(rememberScrollState()) else Modifier),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            // Stack container: background card (if nextStudent) + active swipe card
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(cardHeight + (if (isSmallScreen) 8.dp else 12.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                // Next Student Card in Stack (Deck preview)
+                if (nextStudent != null) {
+                    val stackScale = androidx.compose.ui.util.lerp(0.92f, 0.98f, dragFraction.coerceIn(0f, 1f))
+                    val stackOffsetY = androidx.compose.ui.unit.lerp(if (isSmallScreen) 8.dp else 12.dp, 2.dp, dragFraction.coerceIn(0f, 1f))
+                    val stackAlpha = androidx.compose.ui.util.lerp(0.65f, 0.95f, dragFraction.coerceIn(0f, 1f))
+
+                    StudentCardSurface(
+                        student = nextStudent,
+                        status = localAttendance[nextStudent.id],
+                        currentIndex = currentIndex + 1,
+                        totalCount = totalCount,
+                        isSmallScreen = isSmallScreen,
+                        modifier = Modifier
+                            .fillMaxWidth(cardWidthFraction)
+                            .height(cardHeight)
+                            .offset(y = stackOffsetY)
+                            .scale(stackScale)
+                            .alpha(stackAlpha)
+                            .shadow(4.dp, RoundedCornerShape(26.dp), spotColor = Color.Black.copy(alpha = 0.08f))
+                            .clip(RoundedCornerShape(26.dp))
+                            .background(Color(0xFFF8FAFC))
+                            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(26.dp))
+                    )
+                }
+
+                // Top Active Swipable Card
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(cardWidthFraction)
+                        .height(cardHeight)
+                        .offset { IntOffset(offsetX.value.roundToInt(), offsetY.value.roundToInt()) }
+                        .rotate(rotation)
+                        .pointerInput(student.id) {
+                            detectDragGestures(
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    coroutineScope.launch {
+                                        offsetX.snapTo(offsetX.value + dragAmount.x)
+                                        offsetY.snapTo(offsetY.value + dragAmount.y * 0.20f)
                                     }
-                                    launch {
-                                        offsetY.animateTo(
-                                            0f,
-                                            spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
-                                        )
+                                },
+                                onDragEnd = {
+                                    coroutineScope.launch {
+                                        if (offsetX.value > swipeThreshold) {
+                                            offsetX.animateTo(screenWidthPx * 1.3f, tween(180))
+                                            onSwipeRight()
+                                        } else if (offsetX.value < -swipeThreshold) {
+                                            offsetX.animateTo(-screenWidthPx * 1.3f, tween(180))
+                                            onSwipeLeft()
+                                        } else {
+                                            launch {
+                                                offsetX.animateTo(
+                                                    0f,
+                                                    spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
+                                                )
+                                            }
+                                            launch {
+                                                offsetY.animateTo(
+                                                    0f,
+                                                    spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
-                            }
+                            )
                         }
-                    )
-                }
-                .shadow(8.dp, RoundedCornerShape(24.dp), ambientColor = Color(0x1F000000))
-                .clip(RoundedCornerShape(24.dp))
-                .background(Color.White)
-                .border(
-                    width = 1.5.dp,
-                    color = when {
-                        rightProgress > 0.15f -> Color(0xFF16A34A).copy(alpha = rightProgress)
-                        leftProgress > 0.15f -> Color(0xFFDC2626).copy(alpha = leftProgress)
-                        else -> Color(0xFFE2E8F0)
-                    },
-                    shape = RoundedCornerShape(24.dp)
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            // Background Dynamic Gradient/Tint while dragging
-            if (rightProgress > 0f) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFF22C55E).copy(alpha = rightProgress * 0.18f))
-                )
-            } else if (leftProgress > 0f) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFFEF4444).copy(alpha = leftProgress * 0.18f))
-                )
-            }
-
-            // Card Interior Content
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                // Large Avatar Circle
-                val initials = student.name.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("")
-                Box(
-                    modifier = Modifier
-                        .size(88.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFFEDE9FE))
-                        .border(2.dp, Color(0xFFC4B5FD), CircleShape),
-                    contentAlignment = Alignment.Center
+                        .shadow(
+                            elevation = if (dragFraction > 0.1f) 14.dp else 6.dp,
+                            shape = RoundedCornerShape(26.dp),
+                            spotColor = when {
+                                rightProgress > 0.15f -> Color(0xFF10B981).copy(alpha = 0.35f)
+                                leftProgress > 0.15f -> Color(0xFFEF4444).copy(alpha = 0.35f)
+                                else -> Color.Black.copy(alpha = 0.10f)
+                            }
+                        )
+                        .clip(RoundedCornerShape(26.dp))
+                        .background(Color.White)
+                        .border(
+                            width = if (rightProgress > 0.1f || leftProgress > 0.1f) 2.dp else 1.2.dp,
+                            brush = when {
+                                rightProgress > 0.15f -> Brush.linearGradient(listOf(Color(0xFF10B981), Color(0xFF34D399)))
+                                leftProgress > 0.15f -> Brush.linearGradient(listOf(Color(0xFFEF4444), Color(0xFFF87171)))
+                                else -> Brush.linearGradient(listOf(Color(0xFFE2E8F0), Color(0xFFCBD5E1)))
+                            },
+                            shape = RoundedCornerShape(26.dp)
+                        )
                 ) {
-                    Text(
-                        text = if (initials.isNotBlank()) initials else "S",
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF6D28D9),
-                        fontSize = 32.sp
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(18.dp))
-
-                Text(
-                    text = student.name,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF0F172A),
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Text(
-                    text = "Roll No: ${student.rollNumber}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF64748B)
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Current Marking Badge
-                if (status != null) {
-                    val (badgeText, badgeBg, badgeFg) = when (status) {
-                        "P" -> Triple("Marked: Present", Color(0xFFDCFCE7), Color(0xFF15803D))
-                        "A" -> Triple("Marked: Absent", Color(0xFFFEE2E2), Color(0xFFB91C1C))
-                        "L" -> Triple("Marked: Late", Color(0xFFFEF3C7), Color(0xFFB45309))
-                        else -> Triple("Unmarked", Color(0xFFF1F5F9), Color(0xFF64748B))
-                    }
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = badgeBg
-                    ) {
-                        Text(
-                            text = badgeText,
-                            color = badgeFg,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    // Reactive Background Tint while swiping
+                    if (rightProgress > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color(0xFF22C55E).copy(alpha = rightProgress * 0.15f))
+                        )
+                    } else if (leftProgress > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color(0xFFEF4444).copy(alpha = leftProgress * 0.15f))
                         )
                     }
-                } else {
-                    Text(
-                        text = "Swipe Right for Present • Left for Absent",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF94A3B8)
+
+                    // Card interior content
+                    StudentCardSurface(
+                        student = student,
+                        status = status,
+                        currentIndex = currentIndex,
+                        totalCount = totalCount,
+                        isSmallScreen = isSmallScreen,
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    // Interactive Stamp Overlays
+                    if (rightProgress > 0.16f) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(if (isSmallScreen) 12.dp else 16.dp)
+                                .rotate(-13f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.92f))
+                                .border(2.5.dp, Color(0xFF10B981), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text("PRESENT", fontWeight = FontWeight.Black, color = Color(0xFF10B981), fontSize = if (isSmallScreen) 14.sp else 16.sp)
+                            }
+                        }
+                    } else if (leftProgress > 0.16f) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(if (isSmallScreen) 12.dp else 16.dp)
+                                .rotate(13f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.92f))
+                                .border(2.5.dp, Color(0xFFEF4444), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Cancel, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text("ABSENT", fontWeight = FontWeight.Black, color = Color(0xFFEF4444), fontSize = if (isSmallScreen) 14.sp else 16.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(spacingBetweenCardAndButtons))
+
+            // Action Buttons Row Below Card
+            Row(
+                modifier = Modifier.fillMaxWidth(cardWidthFraction),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Previous Student Button
+                IconButton(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onPreviousClick()
+                    },
+                    enabled = canGoPrevious,
+                    modifier = Modifier
+                        .size(if (isSmallScreen) 44.dp else 48.dp)
+                        .clip(CircleShape)
+                        .background(if (canGoPrevious) Color.White else Color(0xFFF1F5F9))
+                        .border(1.dp, if (canGoPrevious) Color(0xFFCBD5E1) else Color(0xFFE2E8F0), CircleShape)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Undo,
+                        contentDescription = "Previous Student",
+                        tint = if (canGoPrevious) Color(0xFF475569) else Color(0xFFCBD5E1),
+                        modifier = Modifier.size(if (isSmallScreen) 20.dp else 22.dp)
                     )
                 }
-            }
 
-            // Swipe Overlay Stamps
-            if (rightProgress > 0.2f) {
-                Box(
+                // Tap Mark Absent
+                FilledTonalIconButton(
+                    onClick = onSwipeLeft,
                     modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(20.dp)
-                        .rotate(-15f)
-                        .border(3.dp, Color(0xFF16A34A), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                        .size(if (isSmallScreen) 50.dp else 56.dp)
+                        .border(1.2.dp, Color(0xFFFECACA), CircleShape),
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = Color(0xFFFEE2E2),
+                        contentColor = Color(0xFFDC2626)
+                    )
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF16A34A), modifier = Modifier.size(24.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("PRESENT", fontWeight = FontWeight.Black, color = Color(0xFF16A34A), fontSize = 18.sp)
-                    }
+                    Icon(Icons.Default.Close, contentDescription = "Mark Absent", modifier = Modifier.size(if (isSmallScreen) 24.dp else 28.dp))
                 }
-            } else if (leftProgress > 0.2f) {
-                Box(
+
+                // Tap Mark Late (Pill Button)
+                FilledTonalButton(
+                    onClick = onLateClick,
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = Color(0xFFFEF3C7),
+                        contentColor = Color(0xFFB45309)
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.2.dp, Color(0xFFFDE68A)),
+                    contentPadding = PaddingValues(
+                        horizontal = if (isSmallScreen) 14.dp else 18.dp,
+                        vertical = if (isSmallScreen) 8.dp else 10.dp
+                    ),
+                    modifier = Modifier.height(if (isSmallScreen) 44.dp else 48.dp)
+                ) {
+                    Icon(Icons.Default.AccessTime, contentDescription = "Mark Late", modifier = Modifier.size(if (isSmallScreen) 16.dp else 18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Late", fontWeight = FontWeight.Bold, fontSize = if (isSmallScreen) 13.sp else 14.sp)
+                }
+
+                // Tap Mark Present
+                FilledTonalIconButton(
+                    onClick = onSwipeRight,
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(20.dp)
-                        .rotate(15f)
-                        .border(3.dp, Color(0xFFDC2626), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                        .size(if (isSmallScreen) 50.dp else 56.dp)
+                        .border(1.2.dp, Color(0xFFBBF7D0), CircleShape),
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = Color(0xFFDCFCE7),
+                        contentColor = Color(0xFF16A34A)
+                    )
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Close, contentDescription = null, tint = Color(0xFFDC2626), modifier = Modifier.size(24.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("ABSENT", fontWeight = FontWeight.Black, color = Color(0xFFDC2626), fontSize = 18.sp)
-                    }
+                    Icon(Icons.Default.Check, contentDescription = "Mark Present", modifier = Modifier.size(if (isSmallScreen) 24.dp else 28.dp))
                 }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Action Buttons Row Below Card
-        Row(
-            modifier = Modifier.fillMaxWidth(0.92f),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Previous Student Button
-            IconButton(
-                onClick = onPreviousClick,
-                enabled = canGoPrevious,
-                modifier = Modifier
-                    .size(46.dp)
-                    .clip(CircleShape)
-                    .background(if (canGoPrevious) Color.White else Color(0xFFF1F5F9))
-                    .border(1.dp, Color(0xFFE2E8F0), CircleShape)
-            ) {
-                Icon(
-                    Icons.Default.ArrowBack,
-                    contentDescription = "Previous",
-                    tint = if (canGoPrevious) Color(0xFF475569) else Color(0xFFCBD5E1)
-                )
-            }
-
-            // Tap Mark Absent
-            FilledTonalIconButton(
-                onClick = onSwipeLeft,
-                modifier = Modifier.size(56.dp),
-                colors = IconButtonDefaults.filledTonalIconButtonColors(
-                    containerColor = Color(0xFFFEE2E2),
-                    contentColor = Color(0xFFDC2626)
-                )
-            ) {
-                Icon(Icons.Default.Close, contentDescription = "Mark Absent", modifier = Modifier.size(28.dp))
-            }
-
-            // Tap Mark Late (Pill Button)
-            FilledTonalButton(
-                onClick = onLateClick,
-                colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = Color(0xFFFEF3C7),
-                    contentColor = Color(0xFFB45309)
-                ),
-                shape = RoundedCornerShape(14.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
-            ) {
-                Icon(Icons.Default.AccessTime, contentDescription = "Mark Late", modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Late", fontWeight = FontWeight.Bold)
-            }
-
-            // Tap Mark Present
-            FilledTonalIconButton(
-                onClick = onSwipeRight,
-                modifier = Modifier.size(56.dp),
-                colors = IconButtonDefaults.filledTonalIconButtonColors(
-                    containerColor = Color(0xFFDCFCE7),
-                    contentColor = Color(0xFF16A34A)
-                )
-            ) {
-                Icon(Icons.Default.Check, contentDescription = "Mark Present", modifier = Modifier.size(28.dp))
             }
         }
     }
 }
+
+/**
+ * Surface and internal typography of a single student card
+ */
+@Composable
+fun StudentCardSurface(
+    student: StudentEntity,
+    status: String?,
+    currentIndex: Int,
+    totalCount: Int,
+    isSmallScreen: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .padding(
+                horizontal = if (isSmallScreen) 16.dp else 20.dp,
+                vertical = if (isSmallScreen) 12.dp else 16.dp
+            ),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        // Top Row: Student Index pill & Status badge
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                color = Color(0xFFEEF2FF),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(0.8.dp, Color(0xFFC7D2FE))
+            ) {
+                Text(
+                    text = "STUDENT ${currentIndex + 1} OF $totalCount",
+                    color = Color(0xFF4F46E5),
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = if (isSmallScreen) 10.sp else 11.sp,
+                    letterSpacing = 0.5.sp,
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.5.dp)
+                )
+            }
+
+            if (status != null) {
+                val badge = when (status) {
+                    "P" -> QuadrupleBadge("Marked: Present", Color(0xFFDCFCE7), Color(0xFF15803D), Color(0xFF86EFAC))
+                    "A" -> QuadrupleBadge("Marked: Absent", Color(0xFFFEE2E2), Color(0xFFB91C1C), Color(0xFFFCA5A5))
+                    "L" -> QuadrupleBadge("Marked: Late", Color(0xFFFEF3C7), Color(0xFFB45309), Color(0xFFFDE68A))
+                    else -> QuadrupleBadge("Unmarked", Color(0xFFF1F5F9), Color(0xFF64748B), Color(0xFFE2E8F0))
+                }
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = badge.bg,
+                    border = BorderStroke(0.8.dp, badge.border)
+                ) {
+                    Text(
+                        text = badge.text,
+                        color = badge.fg,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = if (isSmallScreen) 10.sp else 11.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp)
+                    )
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFF8FAFC),
+                    border = BorderStroke(0.8.dp, Color(0xFFE2E8F0))
+                ) {
+                    Text(
+                        text = "Pending",
+                        color = Color(0xFF94A3B8),
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = if (isSmallScreen) 10.sp else 11.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp)
+                    )
+                }
+            }
+        }
+
+        // Center Content: Avatar + Name + Roll Number
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(vertical = if (isSmallScreen) 2.dp else 6.dp)
+        ) {
+            val avatarSize = if (isSmallScreen) 62.dp else 76.dp
+            val initials = student.name.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("")
+
+            Box(
+                modifier = Modifier
+                    .size(avatarSize)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.linearGradient(
+                            listOf(Color(0xFFEDE9FE), Color(0xFFDDD6FE))
+                        )
+                    )
+                    .border(
+                        width = 2.5.dp,
+                        brush = Brush.linearGradient(
+                            listOf(Color(0xFF6366F1), Color(0xFF8B5CF6), Color(0xFFA855F7))
+                        ),
+                        shape = CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (initials.isNotBlank()) initials else "S",
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFF5B21B6),
+                    fontSize = if (isSmallScreen) 22.sp else 28.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(if (isSmallScreen) 6.dp else 10.dp))
+
+            Text(
+                text = student.name,
+                style = if (isSmallScreen) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color(0xFF0F172A),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(modifier = Modifier.height(3.dp))
+
+            // Roll Number Badge
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFFF1F5F9),
+                border = BorderStroke(0.8.dp, Color(0xFFE2E8F0))
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Badge,
+                        contentDescription = null,
+                        tint = Color(0xFF64748B),
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Roll: ${student.rollNumber}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF334155),
+                        fontSize = if (isSmallScreen) 11.sp else 12.sp
+                    )
+                }
+            }
+        }
+
+        // Bottom guide row inside card
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 2.dp)
+        ) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Color(0xFFDC2626).copy(alpha = 0.6f), modifier = Modifier.size(11.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = "Left for Absent",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFF94A3B8),
+                fontSize = if (isSmallScreen) 10.sp else 11.sp
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("•", color = Color(0xFFCBD5E1), fontSize = 10.sp)
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "Right for Present",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFF94A3B8),
+                fontSize = if (isSmallScreen) 10.sp else 11.sp
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = Color(0xFF16A34A).copy(alpha = 0.6f), modifier = Modifier.size(11.dp))
+        }
+    }
+}
+
+private data class QuadrupleBadge(val text: String, val bg: Color, val fg: Color, val border: Color)
 
 /**
  * Summary View shown once all cards in Card View mode have been reviewed
@@ -1071,48 +1355,48 @@ fun CardEvaluationSummary(
     Card(
         modifier = Modifier
             .fillMaxWidth(0.92f)
-            .padding(vertical = 12.dp),
+            .padding(vertical = 8.dp),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(28.dp),
+                .padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Box(
                 modifier = Modifier
-                    .size(68.dp)
+                    .size(54.dp)
                     .clip(CircleShape)
                     .background(Color(0xFFEDE9FE)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.DoneAll, contentDescription = null, tint = Color(0xFF6D28D9), modifier = Modifier.size(38.dp))
+                Icon(Icons.Default.DoneAll, contentDescription = null, tint = Color(0xFF6D28D9), modifier = Modifier.size(30.dp))
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             Text(
                 "All Students Evaluated!",
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF0F172A),
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                "All $total students have been reviewed for this session. You can review the register in List View or submit now.",
-                style = MaterialTheme.typography.bodyMedium,
+                "All $total students have been reviewed. You can review the register in List View or submit.",
+                style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF64748B),
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1123,24 +1407,29 @@ fun CardEvaluationSummary(
                 SummaryPill("Late", late, Color(0xFFD97706), Color(0xFFFEF3C7))
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             OutlinedButton(
                 onClick = onReviewList,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Icon(Icons.Default.FormatListBulleted, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Review & Tweak in List View")
+                Icon(Icons.Default.FormatListBulleted, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Review & Tweak in List View", fontSize = 13.sp)
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
-            TextButton(onClick = onRestartCards) {
-                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+            TextButton(
+                onClick = onRestartCards,
+                modifier = Modifier.height(36.dp)
+            ) {
+                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(15.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Start Over from First Card")
+                Text("Start Over from First Card", fontSize = 12.5.sp)
             }
         }
     }
