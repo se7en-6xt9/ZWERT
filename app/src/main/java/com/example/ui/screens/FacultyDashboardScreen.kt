@@ -389,32 +389,16 @@ fun ElevatedFacultyProfileHeader(
                             navController.navigate("profile")
                         }
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Teacher Dashboard",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontSize = 16.5.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = accentColor.copy(alpha = 0.14f),
-                            border = BorderStroke(0.8.dp, accentColor.copy(alpha = 0.32f))
-                        ) {
-                            Text(
-                                text = "Faculty",
-                                color = accentColor,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                            )
-                        }
-                    }
+                    Text(
+                        text = "Teacher Dashboard",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontSize = 15.5.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
 
                     Spacer(modifier = Modifier.height(2.dp))
 
@@ -427,7 +411,7 @@ fun ElevatedFacultyProfileHeader(
                     )
                 }
 
-                // Action buttons: Register, Theme Toggle, Profile
+                // Action buttons: Register & Theme Toggle
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -435,7 +419,7 @@ fun ElevatedFacultyProfileHeader(
                     // Dedicated Attendance Register Button
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(32.dp)
                             .clip(CircleShape)
                             .background(
                                 if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.7f)
@@ -451,14 +435,14 @@ fun ElevatedFacultyProfileHeader(
                             imageVector = Icons.Default.Assessment,
                             contentDescription = "Attendance Register",
                             tint = accentColor,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
 
                     // Theme Toggle Button
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(32.dp)
                             .clip(CircleShape)
                             .background(if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.7f) else Color(0xFFF1F5F9))
                             .clickable {
@@ -471,27 +455,7 @@ fun ElevatedFacultyProfileHeader(
                             imageVector = if (isDarkTheme) Icons.Default.DarkMode else Icons.Default.LightMode,
                             contentDescription = "Toggle Theme",
                             tint = if (isDarkTheme) Color(0xFFF59E0B) else accentColor,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    // Profile Chevron
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.7f) else Color(0xFFF1F5F9))
-                            .clickable {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                navController.navigate("profile")
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = "Profile",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }

@@ -140,7 +140,9 @@ fun buildChronologicalTimeline(slots: List<ScheduleSlotEntity>): List<ScheduleTi
 }
 
 /**
- * Modern, polished mini-card to display Lunch / Recess breaks seamlessly integrated into the schedule.
+ * Compact, thin mini-card for Break intervals.
+ * Displays only: Break label, Duration (e.g. 60m), and Time Period (e.g. 1:30 PM - 2:30 PM).
+ * Engineered to take minimal vertical space on compact screens.
  */
 @Composable
 fun ScheduleBreakCard(
@@ -148,104 +150,73 @@ fun ScheduleBreakCard(
     modifier: Modifier = Modifier
 ) {
     val isLunch = breakItem.isLunch
-    val warmAmber = Color(0xFFF59E0B)
-    val lunchOrange = Color(0xFFFF7043)
-    val teaTeal = Color(0xFF0D9488)
+    val primaryColor = if (isLunch) Color(0xFFFF7043) else Color(0xFF0D9488)
 
-    val primaryColor = if (isLunch) lunchOrange else teaTeal
-    val bgGradient = if (isLunch) {
-        listOf(lunchOrange.copy(alpha = 0.12f), warmAmber.copy(alpha = 0.06f))
-    } else {
-        listOf(teaTeal.copy(alpha = 0.10f), teaTeal.copy(alpha = 0.04f))
-    }
-
-    Card(
+    Surface(
         modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, primaryColor.copy(alpha = 0.35f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        shape = RoundedCornerShape(12.dp),
+        color = primaryColor.copy(alpha = 0.07f),
+        border = BorderStroke(1.dp, primaryColor.copy(alpha = 0.22f))
     ) {
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Brush.horizontalGradient(bgGradient))
-                .padding(horizontal = 16.dp, vertical = 14.dp)
+                .padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
+            // Left: Icon + "Break" / "Lunch Break" + Duration Badge
             Row(
-                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                modifier = Modifier.weight(1f, fill = false)
             ) {
-                // Left Icon + Title + Duration
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(primaryColor.copy(alpha = 0.18f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isLunch) Icons.Default.Restaurant else Icons.Default.Coffee,
-                            contentDescription = breakItem.title,
-                            tint = primaryColor,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = breakItem.title,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Timer,
-                                contentDescription = null,
-                                modifier = Modifier.size(13.dp),
-                                tint = primaryColor
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "${breakItem.durationMinutes} mins free time",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = primaryColor
-                            )
-                        }
-                    }
-                }
-
-                // Right Time Badge
+                Icon(
+                    imageVector = if (isLunch) Icons.Default.Restaurant else Icons.Default.Coffee,
+                    contentDescription = null,
+                    tint = primaryColor,
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (isLunch) "Lunch Break" else "Break",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.5.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
+                )
+                Spacer(modifier = Modifier.width(6.dp))
                 Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = primaryColor.copy(alpha = 0.15f),
-                    border = BorderStroke(0.8.dp, primaryColor.copy(alpha = 0.3f))
+                    shape = RoundedCornerShape(6.dp),
+                    color = primaryColor.copy(alpha = 0.14f)
                 ) {
                     Text(
-                        text = "${breakItem.startTime} - ${breakItem.endTime}",
+                        text = "${breakItem.durationMinutes}m",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
+                            fontSize = 10.5.sp
                         ),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        color = primaryColor,
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Right: Time Period
+            Text(
+                text = "${breakItem.startTime} - ${breakItem.endTime}",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 11.5.sp
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
         }
     }
 }

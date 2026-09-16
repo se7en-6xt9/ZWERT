@@ -492,34 +492,18 @@ fun ElevatedStudentProfileHeader(
                             navController.navigate("profile")
                         }
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Student Dashboard",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontSize = 16.5.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Surface(
-                            shape = RoundedCornerShape(5.dp),
-                            color = Color(0xFF10B981).copy(alpha = 0.14f),
-                            border = BorderStroke(0.8.dp, Color(0xFF10B981).copy(alpha = 0.30f))
-                        ) {
-                            Text(
-                                text = "Student",
-                                color = Color(0xFF059669),
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                            )
-                        }
-                    }
+                    Text(
+                        text = "Student Dashboard",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontSize = 15.5.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
 
-                    Spacer(modifier = Modifier.height(1.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
 
                     Text(
                         text = "$name • $branchInfo",
@@ -530,38 +514,41 @@ fun ElevatedStudentProfileHeader(
                     )
                 }
 
-                // Dedicated Attendance Register Button
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = Color(0xFF10B981).copy(alpha = 0.12f),
-                    border = BorderStroke(0.8.dp, Color(0xFF10B981).copy(alpha = 0.30f)),
-                    modifier = Modifier
-                        .clickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            navController.navigate("student_report")
-                        }
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Assessment,
-                            contentDescription = "Attendance Register",
-                            tint = Color(0xFF059669),
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = if (stats.second > 0) "${String.format(Locale.ENGLISH, "%.0f", pct)}%" else "Register",
-                            color = Color(0xFF059669),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-
                 Spacer(modifier = Modifier.width(6.dp))
+
+                // Dedicated Attendance Register Button
+                if (stats.second > 0) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFF10B981).copy(alpha = 0.12f),
+                        border = BorderStroke(0.8.dp, Color(0xFF10B981).copy(alpha = 0.30f)),
+                        modifier = Modifier
+                            .clickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                navController.navigate("student_report")
+                            }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Assessment,
+                                contentDescription = "Attendance Register",
+                                tint = Color(0xFF059669),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = "${String.format(Locale.ENGLISH, "%.0f", pct)}%",
+                                color = Color(0xFF059669),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                }
 
                 // Quick Theme Toggle button (Dark / Light)
                 Box(
@@ -579,28 +566,6 @@ fun ElevatedStudentProfileHeader(
                         imageVector = if (isDarkTheme) Icons.Default.DarkMode else Icons.Default.LightMode,
                         contentDescription = "Toggle Theme",
                         tint = if (isDarkTheme) Color(0xFFF59E0B) else Color(0xFF6366F1),
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(4.dp))
-
-                // Profile Chevron
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.6f) else Color(0xFFF1F5F9))
-                        .clickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            navController.navigate("profile")
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = "Profile",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp)
                     )
                 }

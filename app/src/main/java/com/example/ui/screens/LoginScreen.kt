@@ -1,7 +1,12 @@
 package com.example.ui.screens
 
+import android.accounts.AccountManager
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -52,6 +57,24 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
 import kotlinx.coroutines.launch
 
+private fun Context.findActivity(): Activity? {
+    var ctx = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
+
+private fun getDeviceGoogleAccounts(context: Context): List<String> {
+    return try {
+        val am = AccountManager.get(context)
+        am.getAccountsByType("com.google").mapNotNull { it.name }.filter { it.contains("@") }
+    } catch (e: Exception) {
+        emptyList()
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
@@ -95,10 +118,69 @@ fun LoginScreen(
     var showGoogleRoleFallbackModal by remember { mutableStateOf(false) }
     var showGoogleAccountPickerModal by remember { mutableStateOf(false) }
     var googlePickerAction by remember { mutableStateOf("signin") } // "signin" or "signup"
-    var googleAccountEmailInput by remember { mutableStateOf("user.academic@gmail.com") }
+    var googleAccountEmailInput by remember { mutableStateOf("") }
     var showEmailPasswordFields by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val pickerSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // Google Account Picker Launcher for device accounts
+    val googleAccountPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        isSubmitting = false
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val selectedEmail = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
+            if (!selectedEmail.isNullOrBlank()) {
+                googleAccountEmailInput = selectedEmail
+                if (googlePickerAction == "signin") {
+                    isSubmitting = true
+                    viewModel.signInWithGoogleAccountEmail(
+                        googleEmail = selectedEmail,
+                        onSuccess = { hasProfile, role ->
+                            isSubmitting = false
+                            if (role.isNullOrBlank()) {
+                                showGoogleRoleFallbackModal = true
+                            } else {
+                                val dest = if (role == "teacher") "faculty_dashboard" else "student_dashboard"
+                                navController.navigate(dest) {
+                                    popUpTo("login") { inclusive = true }
+                                }
+                            }
+                        },
+                        onError = { msg ->
+                            isSubmitting = false
+                            showGoogleAccountPickerModal = true
+                            coroutineScope.launch {
+                                snackbarHostState.showSnackbar("Google Sign-In: $msg")
+                            }
+                        }
+                    )
+                } else {
+                    showGoogleAccountPickerModal = true
+                }
+            }
+        }
+    }
+
+    val launchSystemAccountPicker: (String) -> Unit = { action ->
+        googlePickerAction = action
+        try {
+            val intent = AccountManager.newChooseAccountIntent(
+                null,
+                null,
+                arrayOf("com.google"),
+                false,
+                null,
+                null,
+                null,
+                null
+            )
+            googleAccountPickerLauncher.launch(intent)
+        } catch (e: Exception) {
+            Log.e("LoginScreen", "Cannot launch system account chooser: ${e.message}")
+            showGoogleAccountPickerModal = true
+        }
+    }
 
     val primaryIndigo = Color(0xFF4F46E5)
     val accentMint = Color(0xFF10B981)
@@ -269,11 +351,12 @@ fun LoginScreen(
                         ""
                     }
 
-                    isSubmitting = true
-                    coroutineScope.launch {
-                        try {
-                            if (clientId.isNotBlank()) {
-                                val credentialManager = CredentialManager.create(context)
+                    val activity = context.findActivity()
+                    if (activity != null && clientId.isNotBlank()) {
+                        isSubmitting = true
+                        coroutineScope.launch {
+                            try {
+                                val credentialManager = CredentialManager.create(activity)
                                 val googleIdOption = GetGoogleIdOption.Builder()
                                     .setFilterByAuthorizedAccounts(false)
                                     .setServerClientId(clientId)
@@ -282,7 +365,7 @@ fun LoginScreen(
                                 val request = GetCredentialRequest.Builder()
                                     .addCredentialOption(googleIdOption)
                                     .build()
-                                val result = credentialManager.getCredential(context, request)
+                                val result = credentialManager.getCredential(activity, request)
                                 val credential = result.credential
                                 if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                                     val tokenCred = GoogleIdTokenCredential.createFrom(credential.data)
@@ -299,24 +382,23 @@ fun LoginScreen(
                                                 }
                                             }
                                         },
-                                        onError = { msg ->
+                                        onError = {
                                             isSubmitting = false
-                                            googlePickerAction = "signin"
-                                            showGoogleAccountPickerModal = true
+                                            launchSystemAccountPicker("signin")
                                         }
                                     )
                                     return@launch
                                 }
+                                isSubmitting = false
+                                launchSystemAccountPicker("signin")
+                            } catch (e: Exception) {
+                                isSubmitting = false
+                                Log.d("LoginScreen", "CredentialManager fallback to account picker: ${e.message}")
+                                launchSystemAccountPicker("signin")
                             }
-                            isSubmitting = false
-                            googlePickerAction = "signin"
-                            showGoogleAccountPickerModal = true
-                        } catch (e: Exception) {
-                            isSubmitting = false
-                            Log.e("LoginScreen", "Google Credential Exception: ${e.message}", e)
-                            googlePickerAction = "signin"
-                            showGoogleAccountPickerModal = true
                         }
+                    } else {
+                        launchSystemAccountPicker("signin")
                     }
                 },
                 modifier = Modifier
@@ -745,11 +827,12 @@ fun LoginScreen(
                                             ""
                                         }
 
-                                        isSubmitting = true
-                                        coroutineScope.launch {
-                                            try {
-                                                if (clientId.isNotBlank()) {
-                                                    val credentialManager = CredentialManager.create(context)
+                                        val activity = context.findActivity()
+                                        if (activity != null && clientId.isNotBlank()) {
+                                            isSubmitting = true
+                                            coroutineScope.launch {
+                                                try {
+                                                    val credentialManager = CredentialManager.create(activity)
                                                     val googleIdOption = GetGoogleIdOption.Builder()
                                                         .setFilterByAuthorizedAccounts(false)
                                                         .setServerClientId(clientId)
@@ -758,7 +841,7 @@ fun LoginScreen(
                                                     val request = GetCredentialRequest.Builder()
                                                         .addCredentialOption(googleIdOption)
                                                         .build()
-                                                    val result = credentialManager.getCredential(context, request)
+                                                    val result = credentialManager.getCredential(activity, request)
                                                     val credential = result.credential
                                                     if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                                                         val tokenCred = GoogleIdTokenCredential.createFrom(credential.data)
@@ -780,22 +863,21 @@ fun LoginScreen(
                                                             },
                                                             onError = { err ->
                                                                 isSubmitting = false
-                                                                googlePickerAction = "signup"
-                                                                showGoogleAccountPickerModal = true
+                                                                launchSystemAccountPicker("signup")
                                                             }
                                                         )
                                                         return@launch
                                                     }
+                                                    isSubmitting = false
+                                                    launchSystemAccountPicker("signup")
+                                                } catch (e: Exception) {
+                                                    isSubmitting = false
+                                                    Log.e("LoginScreen", "Google signup exception: ${e.message}", e)
+                                                    launchSystemAccountPicker("signup")
                                                 }
-                                                isSubmitting = false
-                                                googlePickerAction = "signup"
-                                                showGoogleAccountPickerModal = true
-                                            } catch (e: Exception) {
-                                                isSubmitting = false
-                                                Log.e("LoginScreen", "Google signup exception: ${e.message}", e)
-                                                googlePickerAction = "signup"
-                                                showGoogleAccountPickerModal = true
                                             }
+                                        } else {
+                                            launchSystemAccountPicker("signup")
                                         }
                                     },
                                     modifier = Modifier
@@ -1369,6 +1451,96 @@ fun LoginScreen(
                         }
                         Spacer(modifier = Modifier.height(14.dp))
                     }
+
+                    val detectedAccounts = remember { getDeviceGoogleAccounts(context) }
+
+                    // Button to launch native Android system account chooser
+                    OutlinedButton(
+                        onClick = {
+                            launchSystemAccountPicker(googlePickerAction)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.2.dp, Color(0xFFCBD5E1)),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = Color(0xFFF8FAFC)
+                        )
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text("G", fontWeight = FontWeight.Black, fontSize = 19.sp, color = Color(0xFF4285F4))
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Select Account from Device",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF1E293B)
+                            )
+                        }
+                    }
+
+                    if (detectedAccounts.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Detected Accounts on Device:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF475569)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        detectedAccounts.forEach { accEmail ->
+                            val isChosen = googleAccountEmailInput.equals(accEmail, ignoreCase = true)
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 3.dp)
+                                    .clickable {
+                                        googleAccountEmailInput = accEmail
+                                    },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isChosen) Color(0xFFEEF2FF) else Color(0xFFF1F5F9),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isChosen) primaryIndigo else Color(0xFFE2E8F0)
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AccountCircle,
+                                        contentDescription = null,
+                                        tint = if (isChosen) primaryIndigo else Color(0xFF64748B),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = accEmail,
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            fontWeight = if (isChosen) FontWeight.Bold else FontWeight.Normal
+                                        ),
+                                        color = if (isChosen) primaryIndigo else Color(0xFF1E293B),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (isChosen) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = primaryIndigo,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     // Google Account Input / Selection Field
                     OutlinedTextField(
