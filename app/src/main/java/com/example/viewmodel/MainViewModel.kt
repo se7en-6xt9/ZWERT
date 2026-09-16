@@ -1286,8 +1286,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         try {
             auth?.signOut()
         } catch (e: Throwable) {
-            Log.e("Auth", "Sign out failed", e)
+            Log.e("Auth", "Sign out failed")
         }
+        _authState.value = false
+        _currentUserEmail.value = ""
+        _userProfile.value = null
+        _userRole.value = null
+        _isFaculty.value = false
+        val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+        prefs.edit().clear().apply()
     }
 
     fun wipeAllMyData(onComplete: () -> Unit, onError: (String) -> Unit) {
@@ -1297,24 +1304,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val currentFirestore = firestore
                 val uid = currentAuth?.currentUser?.uid
                 if (currentFirestore != null && uid != null) {
-                    Log.d("FirebaseSync", "User UID: $uid")
-                    Log.d("FirebaseSync", "Writing to path: users/$uid/batches")
-                    val collections = listOf("batches", "students", "attendance")
-                    for (collection in collections) {
-                        val ref = currentFirestore.collection("users").document(uid).collection(collection)
-                        val snapshot = ref.get().await()
-                        for (doc in snapshot.documents) {
-                            doc.reference.delete().await()
-                        }
+                    // 1. Delete user's own batches and their subcollections (students, attendance)
+                    val batchesRef = currentFirestore.collection("users").document(uid).collection("batches")
+                    val batchDocs = batchesRef.get().await()
+                    for (batchDoc in batchDocs.documents) {
+                        val batchId = batchDoc.id
+                        try {
+                            val batchAttSnap = batchesRef.document(batchId).collection("attendance").get().await()
+                            for (attDoc in batchAttSnap.documents) {
+                                attDoc.reference.delete().await()
+                            }
+                        } catch (_: Exception) {}
+
+                        try {
+                            val batchStudSnap = batchesRef.document(batchId).collection("students").get().await()
+                            for (studDoc in batchStudSnap.documents) {
+                                studDoc.reference.delete().await()
+                            }
+                        } catch (_: Exception) {}
+
+                        batchDoc.reference.delete().await()
                     }
-                    Log.d("FirebaseSync", "Write success: true")
+
+                    // 2. Delete other user-scoped collections under users/{uid}
+                    val collections = listOf("students", "attendance", "attendance_records")
+                    for (collection in collections) {
+                        try {
+                            val ref = currentFirestore.collection("users").document(uid).collection(collection)
+                            val snapshot = ref.get().await()
+                            for (doc in snapshot.documents) {
+                                doc.reference.delete().await()
+                            }
+                        } catch (_: Exception) {}
+                    }
                 }
                 
+                // 3. Wipe local SQLite Room database for this device
                 repository.wipeAllData()
-                onComplete()
+                _syncProgress.value = 0f
+                _syncStatusText.value = ""
+
+                withContext(Dispatchers.Main) {
+                    onComplete()
+                }
             } catch (e: Throwable) {
-                Log.e("FirebaseSync", "Write failed: ${e.message}")
-                onError("Failed to wipe data: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onError("Failed to wipe data: ${e.message}")
+                }
             }
         }
     }
@@ -1904,13 +1940,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val students = repository.getStudentsByCourseSync(courseId)
                 val allRecords = repository.getAttendanceForCourseSync(courseId)
                 
+                val profile = _userProfile.value
+                val faculty = profile?.name?.ifBlank { null } ?: "Faculty Member"
+                val institution = profile?.institute?.ifBlank { null } ?: "Department of Computer Science & Engineering"
+                val resolvedOptions = options.copy(
+                    facultyName = faculty,
+                    institutionName = institution
+                )
+
                 val file = withContext(Dispatchers.IO) {
                     AttendanceExportHelper.exportAttendance(
                         context = context,
                         course = course,
                         students = students,
                         attendanceRecords = allRecords,
-                        options = options
+                        options = resolvedOptions
                     )
                 }
                 onComplete(file)

@@ -107,19 +107,46 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
         )
     }
 
+    val userRole by viewModel.userRole.collectAsState()
+    val isStudent = userRole.equals("student", ignoreCase = true)
+    val roleLabel = if (isStudent) "Student" else "Faculty Member"
+
     if (showWipeDialog) {
         AlertDialog(
             onDismissRequest = { showWipeDialog = false },
-            title = { Text("Wipe All Data", fontWeight = FontWeight.Bold) },
-            text = { Text("This will permanently delete all your timetable, students, and attendance data. This cannot be undone. Continue?") },
+            icon = {
+                Icon(
+                    Icons.Default.DeleteSweep,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(36.dp)
+                )
+            },
+            title = { Text("Reset Account Data?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "This will delete only YOUR classes, timetable, students, and attendance records from this device and the cloud.\n\nOther users' accounts and data will NOT be affected.\n\nYour profile will remain intact so you can immediately re-import or add fresh data. Continue?"
+                )
+            },
             confirmButton = {
                 Button(
                     onClick = {
                         showWipeDialog = false
                         viewModel.wipeAllMyData(
                             onComplete = {
-                                navController.navigate("faculty_dashboard") {
-                                    popUpTo(0)
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Account data reset successfully. You can now re-import or add fresh data.",
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                                if (isStudent) {
+                                    navController.navigate("student_dashboard") {
+                                        popUpTo(0)
+                                    }
+                                } else {
+                                    navController.navigate("faculty_dashboard") {
+                                        popUpTo(0)
+                                    }
                                 }
                             },
                             onError = { error ->
@@ -129,7 +156,7 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Text("Confirm")
+                    Text("Reset My Data", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -139,10 +166,6 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
             }
         )
     }
-
-    val userRole by viewModel.userRole.collectAsState()
-    val isStudent = userRole.equals("student", ignoreCase = true)
-    val roleLabel = if (isStudent) "Student" else "Faculty Member"
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -344,19 +367,19 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
             
             Spacer(modifier = Modifier.height(28.dp))
             
-            // Wipe Data Dev Button
+            // Reset Account Data Button (Available for all users to wipe their own data & restart fresh)
             OutlinedButton(
                 onClick = { showWipeDialog = true },
-                modifier = Modifier.fillMaxWidth().height(52.dp),
+                modifier = Modifier.fillMaxWidth().height(54.dp),
                 shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f)),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
             ) {
-                Icon(Icons.Default.DeleteForever, contentDescription = null)
+                Icon(Icons.Default.DeleteSweep, contentDescription = null)
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Wipe All My Data (Dev Mode)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text("Visible during development only", fontSize = 10.sp, color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f))
+                    Text("Reset Account Data", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text("Clear classes, students & attendance to start fresh", fontSize = 10.sp, color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f))
                 }
             }
             

@@ -18,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -631,6 +632,7 @@ fun StudentAttendanceReportScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(start = leftColWidth, top = headerHeight)
+                            .clipToBounds()
                             .horizontalScroll(hScroll)
                             .verticalScroll(vScroll)
                     ) {
@@ -814,6 +816,7 @@ fun StudentAttendanceReportScreen(
                                     }
                                 }
                             }
+                            Spacer(modifier = Modifier.height(110.dp))
                         }
                     }
 
@@ -941,6 +944,7 @@ fun StudentAttendanceReportScreen(
                             .width(leftColWidth)
                             .fillMaxHeight()
                             .padding(top = headerHeight)
+                            .clipToBounds()
                             .verticalScroll(vScroll)
                             .background(if (isDarkTheme) Color(0xFF0F172A) else Color(0xFFF8FAFC))
                             .shadow(3.dp)
@@ -1119,7 +1123,7 @@ fun StudentAttendanceReportScreen(
                                     }
                                 }
                             }
-                            Spacer(modifier = Modifier.height(100.dp))
+                            Spacer(modifier = Modifier.height(110.dp))
                         }
                     }
 

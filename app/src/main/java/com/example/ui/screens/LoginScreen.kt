@@ -1094,98 +1094,6 @@ fun LoginScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(28.dp))
-
-            // 5. DEMO ACCESS PILL BUTTONS (AT BOTTOM)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                HorizontalDivider(modifier = Modifier.weight(1f), color = Color(0xFFCBD5E1))
-                Text(
-                    text = "OR TRY INSTANT DEMO",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF64748B),
-                    modifier = Modifier.padding(horizontal = 14.dp)
-                )
-                HorizontalDivider(modifier = Modifier.weight(1f), color = Color(0xFFCBD5E1))
-            }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            // Demo Faculty Pill Button
-            ElevatedButton(
-                onClick = {
-                    if (isSubmitting) return@ElevatedButton
-                    isSubmitting = true
-                    viewModel.loginAsDemoFaculty {
-                        isSubmitting = false
-                        navController.navigate("faculty_dashboard") {
-                            popUpTo("login") { inclusive = true }
-                        }
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                colors = ButtonDefaults.elevatedButtonColors(
-                    containerColor = Color.White,
-                    contentColor = Color(0xFF1E293B)
-                ),
-                elevation = ButtonDefaults.elevatedButtonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
-                shape = RoundedCornerShape(26.dp),
-                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                enabled = !isSubmitting
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.Person,
-                        contentDescription = null,
-                        tint = primaryIndigo,
-                        modifier = Modifier.padding(end = 10.dp)
-                    )
-                    Text("Demo Faculty Account", fontWeight = FontWeight.SemiBold)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Demo Student Pill Button
-            ElevatedButton(
-                onClick = {
-                    if (isSubmitting) return@ElevatedButton
-                    isSubmitting = true
-                    viewModel.loginAsDemoStudent {
-                        isSubmitting = false
-                        navController.navigate("student_dashboard") {
-                            popUpTo("login") { inclusive = true }
-                        }
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                colors = ButtonDefaults.elevatedButtonColors(
-                    containerColor = Color.White,
-                    contentColor = Color(0xFF1E293B)
-                ),
-                elevation = ButtonDefaults.elevatedButtonElevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
-                shape = RoundedCornerShape(26.dp),
-                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                enabled = !isSubmitting
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.School,
-                        contentDescription = null,
-                        tint = accentMint,
-                        modifier = Modifier.padding(end = 10.dp)
-                    )
-                    Text("Demo Student Account", fontWeight = FontWeight.SemiBold)
-                }
-            }
-
             Spacer(modifier = Modifier.height(24.dp))
         }
 
@@ -1245,8 +1153,7 @@ fun LoginScreen(
                             .clickable {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 showGoogleRoleFallbackModal = false
-                                viewModel.setUserRole("student")
-                                viewModel.loginAsDemoStudent {
+                                viewModel.setUserRole("student") {
                                     navController.navigate("student_dashboard") {
                                         popUpTo("login") { inclusive = true }
                                     }
@@ -1299,8 +1206,7 @@ fun LoginScreen(
                             .clickable {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 showGoogleRoleFallbackModal = false
-                                viewModel.setUserRole("teacher")
-                                viewModel.loginAsDemoFaculty {
+                                viewModel.setUserRole("teacher") {
                                     navController.navigate("faculty_dashboard") {
                                         popUpTo("login") { inclusive = true }
                                     }
