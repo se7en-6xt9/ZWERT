@@ -6,7 +6,6 @@ import android.media.ToneGenerator
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -253,9 +252,8 @@ fun StudentDashboardContent(
                         } else {
                             LazyColumn(
                                 state = listState,
-                                flingBehavior = rememberSnapFlingBehavior(lazyListState = listState),
                                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 120.dp),
-                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 itemsIndexed(
                                     items = timelineItems,
@@ -268,9 +266,7 @@ fun StudentDashboardContent(
                                 ) { index, item ->
                                     when (item) {
                                         is ScheduleTimelineItem.BreakItem -> {
-                                            StaggeredAnimatedItem(index = index) {
-                                                ScheduleBreakCard(breakItem = item)
-                                            }
+                                            ScheduleBreakCard(breakItem = item)
                                         }
                                         is ScheduleTimelineItem.SlotItem -> {
                                             val slot = item.slot
@@ -290,45 +286,43 @@ fun StudentDashboardContent(
 
                                             val subjectStats = courseAttendanceMap[slot.courseId]
 
-                                            StaggeredAnimatedItem(index = index) {
-                                                StudentGlassLectureCard(
-                                                    slot = slot,
-                                                    course = courseMap[slot.courseId],
-                                                    isLive = isLive,
-                                                    isMarkedPresent = isMarkedPresent,
-                                                    timeHint = timeHint,
-                                                    subjectStats = subjectStats,
-                                                    onMarkSelfAttendance = {
-                                                        val ctx = context
-                                                        if (isMarkedPresent) {
-                                                            // Undo / Unmark attendance if clicked again
-                                                            SoundFeedbackHelper.performSuccessHaptic(ctx)
-                                                            viewModel.deleteSelfAttendance(
-                                                                date = dateStr,
-                                                                slotId = slot.id,
-                                                                courseId = slot.courseId
-                                                            )
-                                                        } else {
-                                                            // Mark attendance as Present
-                                                            SoundFeedbackHelper.playApplePaySuccessDing(ctx)
-                                                            SoundFeedbackHelper.performSuccessHaptic(ctx)
-                                                            viewModel.markSelfAttendance(
-                                                                date = dateStr,
-                                                                slotId = slot.id,
-                                                                courseId = slot.courseId,
-                                                                status = "P"
-                                                            )
-                                                        }
-                                                    },
-                                                    onClick = {
-                                                        if (slot.courseId.isNotBlank()) {
-                                                            navController.navigate("student_subject_detail/${slot.courseId}")
-                                                        } else {
-                                                            navController.navigate("student_report")
-                                                        }
+                                            StudentGlassLectureCard(
+                                                slot = slot,
+                                                course = courseMap[slot.courseId],
+                                                isLive = isLive,
+                                                isMarkedPresent = isMarkedPresent,
+                                                timeHint = timeHint,
+                                                subjectStats = subjectStats,
+                                                onMarkSelfAttendance = {
+                                                    val ctx = context
+                                                    if (isMarkedPresent) {
+                                                        // Undo / Unmark attendance if clicked again
+                                                        SoundFeedbackHelper.performSuccessHaptic(ctx)
+                                                        viewModel.deleteSelfAttendance(
+                                                            date = dateStr,
+                                                            slotId = slot.id,
+                                                            courseId = slot.courseId
+                                                        )
+                                                    } else {
+                                                        // Mark attendance as Present
+                                                        SoundFeedbackHelper.playApplePaySuccessDing(ctx)
+                                                        SoundFeedbackHelper.performSuccessHaptic(ctx)
+                                                        viewModel.markSelfAttendance(
+                                                            date = dateStr,
+                                                            slotId = slot.id,
+                                                            courseId = slot.courseId,
+                                                            status = "P"
+                                                        )
                                                     }
-                                                )
-                                            }
+                                                },
+                                                onClick = {
+                                                    if (slot.courseId.isNotBlank()) {
+                                                        navController.navigate("student_subject_detail/${slot.courseId}")
+                                                    } else {
+                                                        navController.navigate("student_report")
+                                                    }
+                                                }
+                                            )
                                         }
                                     }
                                 }
@@ -500,10 +494,10 @@ fun ElevatedStudentProfileHeader(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = name,
+                            text = "Student Dashboard",
                             style = MaterialTheme.typography.titleMedium.copy(
-                                fontSize = 15.5.sp,
-                                fontWeight = FontWeight.Bold
+                                fontSize = 16.5.sp,
+                                fontWeight = FontWeight.ExtraBold
                             ),
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
@@ -528,7 +522,7 @@ fun ElevatedStudentProfileHeader(
                     Spacer(modifier = Modifier.height(1.dp))
 
                     Text(
-                        text = "$branchInfo • $dateStr",
+                        text = "$name • $branchInfo",
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -747,18 +741,15 @@ fun StudentGlassLectureCard(
                     .background(barColor)
             )
 
-            Column(modifier = Modifier.padding(20.dp).fillMaxWidth()) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp).fillMaxWidth()) {
                 val shortLabel = SubjectFormatting.getShortLabel(course, slot.courseId)
                 val fullName = SubjectFormatting.getFullName(course, slot.courseId)
 
                 val subjectText = shortLabel
-                val batchText = buildString {
-                    if (fullName.isNotBlank() && !fullName.equals(shortLabel, ignoreCase = true)) {
-                        append(fullName)
-                        if (slot.section.isNotBlank()) append(" • Sec ${slot.section}")
-                    } else if (slot.section.isNotBlank()) {
-                        append("Sec ${slot.section}")
-                    }
+                val fullSubjectName = if (fullName.isNotBlank() && !fullName.equals(shortLabel, ignoreCase = true)) {
+                    fullName
+                } else {
+                    ""
                 }
 
                 Row(
@@ -766,37 +757,40 @@ fun StudentGlassLectureCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.Top
                 ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
                         Text(
                             text = subjectText,
-                            style = MaterialTheme.typography.titleLarge,
+                            style = MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp),
                             fontWeight = FontWeight.ExtraBold,
                             color = MaterialTheme.colorScheme.onSurface,
-                            lineHeight = 24.sp
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                        if (batchText.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(4.dp))
+                        if (fullSubjectName.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = batchText,
-                                style = MaterialTheme.typography.bodyMedium,
+                                text = fullSubjectName,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
 
                     Column(horizontalAlignment = Alignment.End) {
                         Surface(
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(10.dp),
                             color = if (isLive) liveGreen else MaterialTheme.colorScheme.primaryContainer,
                             modifier = Modifier.bounceClick(scaleDown = 0.95f) {}
                         ) {
                             Text(
                                 text = "${slot.startTime} - ${slot.endTime}",
-                                style = MaterialTheme.typography.labelMedium,
+                                style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
                                 fontWeight = FontWeight.Bold,
                                 color = if (isLive) Color.White else MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
                             )
                         }
 
@@ -866,7 +860,7 @@ fun StudentGlassLectureCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // Location & Section (Hiding faculty students count)
                 Row(
@@ -875,11 +869,11 @@ fun StudentGlassLectureCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.LocationOn, "Location", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(Icons.Default.LocationOn, "Location", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = slot.room.ifBlank { "Main Hall" },
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -895,7 +889,7 @@ fun StudentGlassLectureCard(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
                             )
                         }
                     }
@@ -903,7 +897,7 @@ fun StudentGlassLectureCard(
 
                 // Per-Subject Attendance Pill Badge
                 if (subjectStats != null && subjectStats.second > 0) {
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     val subPct = (subjectStats.first * 100f) / subjectStats.second
                     val subColor = when {
                         subPct >= 75f -> Color(0xFF10B981)
@@ -911,24 +905,24 @@ fun StudentGlassLectureCard(
                         else -> Color(0xFFEF4444)
                     }
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(8.dp),
                         color = subColor.copy(alpha = 0.10f),
                         border = BorderStroke(0.8.dp, subColor.copy(alpha = 0.28f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(
                                     modifier = Modifier
-                                        .size(7.dp)
+                                        .size(6.dp)
                                         .clip(CircleShape)
                                         .background(subColor)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
                                 Text(
                                     text = "Your Attendance: ${String.format(Locale.ENGLISH, "%.1f", subPct)}%",
                                     style = MaterialTheme.typography.labelSmall,
@@ -946,7 +940,7 @@ fun StudentGlassLectureCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // 6. STUDENT SELF ATTENDANCE BUTTON
                 StudentSelfAttendanceButton(
@@ -1002,7 +996,7 @@ fun StudentSelfAttendanceButton(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp)
+                    .height(48.dp)
                     .background(
                         Brush.radialGradient(
                             colors = listOf(
@@ -1010,7 +1004,7 @@ fun StudentSelfAttendanceButton(
                                 Color.Transparent
                             )
                         ),
-                        shape = RoundedCornerShape(20.dp)
+                        shape = RoundedCornerShape(18.dp)
                     )
             )
         }
@@ -1019,13 +1013,13 @@ fun StudentSelfAttendanceButton(
             modifier = Modifier
                 .graphicsLayer(scaleX = scale, scaleY = scale)
                 .fillMaxWidth()
-                .height(50.dp)
+                .height(44.dp)
                 .shadow(
                     elevation = if (isMarked) 3.dp else 6.dp,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(14.dp),
                     spotColor = if (isMarked) Color(0xFF10B981).copy(alpha = 0.4f) else Color(0xFF6366F1).copy(alpha = 0.45f)
                 )
-                .clip(RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(14.dp))
                 .background(buttonGradient)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },

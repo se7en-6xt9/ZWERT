@@ -7,7 +7,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -235,9 +234,8 @@ fun DashboardContent(
                         } else {
                             LazyColumn(
                                 state = listState,
-                                flingBehavior = rememberSnapFlingBehavior(lazyListState = listState),
                                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 120.dp),
-                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 itemsIndexed(
                                     items = timelineItems,
@@ -250,23 +248,19 @@ fun DashboardContent(
                                 ) { index, item ->
                                     when (item) {
                                         is ScheduleTimelineItem.BreakItem -> {
-                                            StaggeredAnimatedItem(index = index) {
-                                                ScheduleBreakCard(breakItem = item)
-                                            }
+                                            ScheduleBreakCard(breakItem = item)
                                         }
                                         is ScheduleTimelineItem.SlotItem -> {
                                             val slot = item.slot
                                             val isLive = isTodayPage && isSlotLive(slot, currentLiveTime)
                                             val timeHint = if (isTodayPage) getRelativeTimeHint(slot, currentLiveTime) else null
-                                            StaggeredAnimatedItem(index = index) {
-                                                GlassLectureCard(
-                                                    slot = slot,
-                                                    course = courseMap[slot.courseId],
-                                                    isLive = isLive,
-                                                    timeHint = timeHint,
-                                                    onClick = { navController.navigate("lecture_view/${slot.id}") }
-                                                )
-                                            }
+                                            GlassLectureCard(
+                                                slot = slot,
+                                                course = courseMap[slot.courseId],
+                                                isLive = isLive,
+                                                timeHint = timeHint,
+                                                onClick = { navController.navigate("lecture_view/${slot.id}") }
+                                            )
                                         }
                                     }
                                 }
@@ -397,10 +391,10 @@ fun ElevatedFacultyProfileHeader(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = name,
+                            text = "Teacher Dashboard",
                             style = MaterialTheme.typography.titleMedium.copy(
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold
+                                fontSize = 16.5.sp,
+                                fontWeight = FontWeight.ExtraBold
                             ),
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
@@ -425,7 +419,7 @@ fun ElevatedFacultyProfileHeader(
                     Spacer(modifier = Modifier.height(2.dp))
 
                     Text(
-                        text = "Department of CSE • $dateStr",
+                        text = "$name • CSE",
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -605,180 +599,196 @@ fun DaySelectorCard(
         label = "pulseAlpha"
     )
 
+    val glassBg = if (isDarkTheme) {
+        Color(0xFF16161E).copy(alpha = 0.74f)
+    } else {
+        Color(0xFFFFFFFF).copy(alpha = 0.78f)
+    }
+
+    val glassBorderColor = if (isDarkTheme) {
+        Color.White.copy(alpha = 0.14f)
+    } else {
+        Color.White.copy(alpha = 0.75f)
+    }
+
+    val accentGradient = Brush.linearGradient(
+        colors = listOf(
+            Color(0xFF6366F1), // Indigo
+            Color(0xFF8B5CF6), // Violet
+            Color(0xFF7C3AED)  // Purple
+        )
+    )
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .shadow(
-                elevation = 3.dp,
-                shape = RoundedCornerShape(16.dp),
-                spotColor = Color.Black.copy(alpha = 0.08f)
-            )
-            .clip(RoundedCornerShape(16.dp))
-            .background(
-                if (isDarkTheme) Color(0xFF1E1E24).copy(alpha = 0.65f)
-                else Color(0xFFFFFFFF).copy(alpha = 0.85f)
-            )
-            .border(
-                1.dp,
-                if (isDarkTheme) Color.White.copy(alpha = 0.08f)
-                else Color.White.copy(alpha = 0.60f),
-                RoundedCornerShape(16.dp)
-            )
+            .padding(horizontal = 20.dp, vertical = 3.dp),
+        contentAlignment = Alignment.Center
     ) {
-        ScrollableTabRow(
-            selectedTabIndex = pagerState.currentPage,
-            containerColor = Color.Transparent,
-            edgePadding = 8.dp,
-            divider = {},
-            indicator = { tabPositions ->
-                if (pagerState.currentPage < tabPositions.size) {
-                    val currentTab = tabPositions[pagerState.currentPage]
-                    val fraction = pagerState.currentPageOffsetFraction
-                    val nextTabIndex = if (fraction > 0) {
-                        minOf(pagerState.currentPage + 1, tabPositions.lastIndex)
-                    } else if (fraction < 0) {
-                        maxOf(pagerState.currentPage - 1, 0)
-                    } else {
-                        pagerState.currentPage
-                    }
-                    val nextTab = tabPositions[nextTabIndex]
-                    val absFrac = abs(fraction)
-
-                    val targetLeft = currentTab.left + (nextTab.left - currentTab.left) * absFrac
-                    val targetWidth = currentTab.width + (nextTab.width - currentTab.width) * absFrac
-
-                    val animatedLeft by animateDpAsState(
-                        targetValue = targetLeft,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessLow
-                        ),
-                        label = "dayIndicatorLeft"
-                    )
-                    val animatedWidth by animateDpAsState(
-                        targetValue = targetWidth,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessLow
-                        ),
-                        label = "dayIndicatorWidth"
-                    )
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .wrapContentSize(Alignment.CenterStart)
-                            .offset(x = animatedLeft)
-                            .width(animatedWidth)
-                            .fillMaxHeight()
-                            .padding(vertical = 4.dp, horizontal = 2.dp)
-                            .shadow(
-                                elevation = 4.dp,
-                                shape = RoundedCornerShape(12.dp),
-                                spotColor = Color(0xFF6366F1).copy(alpha = 0.45f)
-                            )
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                Brush.horizontalGradient(
-                                    colors = listOf(
-                                        Color(0xFF6366F1),
-                                        Color(0xFF8B5CF6)
-                                    )
-                                )
-                            )
-                            .zIndex(0f)
-                    )
-                }
-            }
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .shadow(
+                    elevation = 16.dp,
+                    shape = RoundedCornerShape(32.dp),
+                    spotColor = if (isDarkTheme) Color(0xFF6366F1).copy(alpha = 0.30f) else Color.Black.copy(alpha = 0.18f),
+                    ambientColor = Color.Black.copy(alpha = 0.14f)
+                ),
+            shape = RoundedCornerShape(32.dp),
+            color = glassBg,
+            border = BorderStroke(1.2.dp, glassBorderColor)
         ) {
-            weekDates.forEachIndexed { index, date ->
-                val isSelected = pagerState.currentPage == index
-                Tab(
-                    selected = isSelected,
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        coroutineScope.launch { pagerState.animateScrollToPage(index) }
-                    },
-                    modifier = Modifier
-                        .height(44.dp)
-                        .zIndex(1f),
-                    selectedContentColor = Color.White,
-                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).take(3),
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 12.sp,
-                            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = date.dayOfMonth.toString(),
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 13.5.sp,
-                            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
-                        )
-                        if (date == today) {
-                            Spacer(modifier = Modifier.width(4.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            ) {
+                ScrollableTabRow(
+                    selectedTabIndex = pagerState.currentPage,
+                    containerColor = Color.Transparent,
+                    edgePadding = 8.dp,
+                    divider = {},
+                    indicator = { tabPositions ->
+                        if (pagerState.currentPage < tabPositions.size) {
+                            val currentTab = tabPositions[pagerState.currentPage]
+                            val fraction = pagerState.currentPageOffsetFraction
+                            val nextTabIndex = if (fraction > 0) {
+                                minOf(pagerState.currentPage + 1, tabPositions.lastIndex)
+                            } else if (fraction < 0) {
+                                maxOf(pagerState.currentPage - 1, 0)
+                            } else {
+                                pagerState.currentPage
+                            }
+                            val nextTab = tabPositions[nextTabIndex]
+                            val absFrac = abs(fraction)
+
+                            val targetLeft = currentTab.left + (nextTab.left - currentTab.left) * absFrac
+                            val targetWidth = currentTab.width + (nextTab.width - currentTab.width) * absFrac
+
+                            val animatedLeft by animateDpAsState(
+                                targetValue = targetLeft,
+                                animationSpec = spring(
+                                    dampingRatio = 0.65f,
+                                    stiffness = Spring.StiffnessLow
+                                ),
+                                label = "dayIndicatorLeft"
+                            )
+                            val animatedWidth by animateDpAsState(
+                                targetValue = targetWidth,
+                                animationSpec = spring(
+                                    dampingRatio = 0.65f,
+                                    stiffness = Spring.StiffnessLow
+                                ),
+                                label = "dayIndicatorWidth"
+                            )
+
                             Box(
                                 modifier = Modifier
-                                    .size(5.dp)
-                                    .graphicsLayer {
-                                        scaleX = pulseScale
-                                        scaleY = pulseScale
-                                        alpha = pulseAlpha
-                                    }
-                                    .clip(CircleShape)
-                                    .background(if (isSelected) Color.White else Color(0xFF6366F1))
+                                    .fillMaxSize()
+                                    .wrapContentSize(Alignment.CenterStart)
+                                    .offset(x = animatedLeft)
+                                    .width(animatedWidth)
+                                    .fillMaxHeight()
+                                    .padding(vertical = 5.dp, horizontal = 2.dp)
+                                    .shadow(
+                                        elevation = 8.dp,
+                                        shape = RoundedCornerShape(22.dp),
+                                        spotColor = Color(0xFF6366F1).copy(alpha = 0.60f),
+                                        ambientColor = Color(0xFF8B5CF6).copy(alpha = 0.35f)
+                                    )
+                                    .clip(RoundedCornerShape(22.dp))
+                                    .background(accentGradient)
+                                    .zIndex(0f)
                             )
                         }
                     }
+                ) {
+                    weekDates.forEachIndexed { index, date ->
+                        val isSelected = pagerState.currentPage == index
+                        Tab(
+                            selected = isSelected,
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                coroutineScope.launch { pagerState.animateScrollToPage(index) }
+                            },
+                            modifier = Modifier
+                                .height(52.dp)
+                                .zIndex(1f),
+                            selectedContentColor = Color.White,
+                            unselectedContentColor = if (isDarkTheme) Color(0xFF94A3B8) else Color(0xFF64748B)
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).take(3).uppercase(),
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 0.3.sp,
+                                    color = if (isSelected) Color.White else if (isDarkTheme) Color(0xFF94A3B8) else Color(0xFF64748B)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = date.dayOfMonth.toString(),
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 13.5.sp,
+                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                                )
+                                if (date == today) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(5.dp)
+                                            .graphicsLayer {
+                                                scaleX = pulseScale
+                                                scaleY = pulseScale
+                                                alpha = pulseAlpha
+                                            }
+                                            .clip(CircleShape)
+                                            .background(if (isSelected) Color.White else Color(0xFF6366F1))
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
+
+                // Soft fade-out gradient at left capsule edge
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .width(20.dp)
+                        .fillMaxHeight()
+                        .background(
+                            Brush.horizontalGradient(
+                                colors = listOf(
+                                    if (isDarkTheme) Color(0xFF16161E).copy(alpha = 0.85f) else Color(0xFFFFFFFF).copy(alpha = 0.85f),
+                                    Color.Transparent
+                                )
+                            )
+                        )
+                        .zIndex(2f)
+                )
+
+                // Soft fade-out gradient at right capsule edge
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .width(20.dp)
+                        .fillMaxHeight()
+                        .background(
+                            Brush.horizontalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    if (isDarkTheme) Color(0xFF16161E).copy(alpha = 0.85f) else Color(0xFFFFFFFF).copy(alpha = 0.85f)
+                                )
+                            )
+                        )
+                        .zIndex(2f)
+                )
             }
-        }
-
-        // Soft fade-out gradient at left edge
-        Box(modifier = Modifier.matchParentSize()) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .width(16.dp)
-                    .fillMaxHeight()
-                    .background(
-                        Brush.horizontalGradient(
-                            colors = listOf(
-                                if (isDarkTheme) Color(0xFF1E1E24).copy(alpha = 0.95f) else Color(0xFFFFFFFF).copy(alpha = 0.95f),
-                                Color.Transparent
-                            )
-                        )
-                    )
-                    .zIndex(2f)
-            )
-        }
-
-        // Soft fade-out gradient at right edge
-        Box(modifier = Modifier.matchParentSize()) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .width(16.dp)
-                    .fillMaxHeight()
-                    .background(
-                        Brush.horizontalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                if (isDarkTheme) Color(0xFF1E1E24).copy(alpha = 0.95f) else Color(0xFFFFFFFF).copy(alpha = 0.95f)
-                            )
-                        )
-                    )
-                    .zIndex(2f)
-            )
         }
     }
 }
@@ -826,18 +836,15 @@ fun GlassLectureCard(
                     .background(barColor)
             )
             
-            Column(modifier = Modifier.padding(20.dp).fillMaxWidth()) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp).fillMaxWidth()) {
                 val shortLabel = SubjectFormatting.getShortLabel(course, slot.courseId)
                 val fullName = SubjectFormatting.getFullName(course, slot.courseId)
 
                 val subjectText = shortLabel
-                val batchText = buildString {
-                    if (fullName.isNotBlank() && !fullName.equals(shortLabel, ignoreCase = true)) {
-                        append(fullName)
-                        if (slot.section.isNotBlank()) append(" • Sec ${slot.section}")
-                    } else if (slot.section.isNotBlank()) {
-                        append("Sec ${slot.section}")
-                    }
+                val fullSubjectName = if (fullName.isNotBlank() && !fullName.equals(shortLabel, ignoreCase = true)) {
+                    fullName
+                } else {
+                    ""
                 }
 
                 Row(
@@ -845,37 +852,40 @@ fun GlassLectureCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.Top
                 ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
                         Text(
                             text = subjectText,
-                            style = MaterialTheme.typography.titleLarge,
+                            style = MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp),
                             fontWeight = FontWeight.ExtraBold,
                             color = MaterialTheme.colorScheme.onSurface,
-                            lineHeight = 24.sp
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                        if (batchText.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(4.dp))
+                        if (fullSubjectName.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = batchText,
-                                style = MaterialTheme.typography.bodyMedium,
+                                text = fullSubjectName,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
                     
                     Column(horizontalAlignment = Alignment.End) {
                         Surface(
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(10.dp),
                             color = if (isLive) liveGreen else MaterialTheme.colorScheme.primaryContainer,
                             modifier = Modifier.bounceClick(scaleDown = 0.95f) {}
                         ) {
                             Text(
                                 text = "${slot.startTime} - ${slot.endTime}",
-                                style = MaterialTheme.typography.labelMedium,
+                                style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
                                 fontWeight = FontWeight.Bold,
                                 color = if (isLive) Color.White else MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
                             )
                         }
 
@@ -945,7 +955,7 @@ fun GlassLectureCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -953,29 +963,29 @@ fun GlassLectureCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.LocationOn, "Location", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(Icons.Default.LocationOn, "Location", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = slot.room,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
                     
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.PeopleAlt, "Students", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.secondary)
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(Icons.Default.PeopleAlt, "Students", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
+                        Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = "Sec ${slot.section}",
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 AnimatedAttendanceButton(onClick = onClick)
             }
@@ -998,8 +1008,8 @@ fun AnimatedAttendanceButton(onClick: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxWidth(widthFraction)
-                .height(48.dp)
-                .clip(RoundedCornerShape(16.dp))
+                .height(44.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .background(containerColor)
                 .bounceClick {
                     if (!isMarked) {

@@ -56,8 +56,17 @@ import java.util.Locale
 @SuppressLint("NewApi")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AttendanceReportScreen(navController: NavController, viewModel: MainViewModel, courseId: String) {
+fun AttendanceReportScreen(navController: NavController, viewModel: MainViewModel, courseId: String? = null) {
     BackHandler { navController.popBackStack() }
+
+    val allCourses by viewModel.getAllCourses().collectAsState(initial = emptyList())
+    var selectedCourseId by remember(courseId) { mutableStateOf(courseId ?: "") }
+
+    LaunchedEffect(allCourses, selectedCourseId) {
+        if (selectedCourseId.isBlank() && allCourses.isNotEmpty()) {
+            selectedCourseId = allCourses.first().id
+        }
+    }
 
     val haptic = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
@@ -65,9 +74,9 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
 
     var course by remember { mutableStateOf<CourseEntity?>(null) }
     var students by remember { mutableStateOf<List<StudentEntity>>(emptyList()) }
-    val slots by viewModel.getScheduleSlotsForCourse(courseId).collectAsState(initial = emptyList())
+    val slots by viewModel.getScheduleSlotsForCourse(selectedCourseId).collectAsState(initial = emptyList())
     // Data source: genuine saved/submitted attendance records from database
-    val attendance by viewModel.getAttendanceForCourse(courseId).collectAsState(initial = emptyList())
+    val attendance by viewModel.getAttendanceForCourse(selectedCourseId).collectAsState(initial = emptyList())
 
     var searchQuery by remember { mutableStateOf("") }
     var showSearchBar by remember { mutableStateOf(false) }
@@ -76,9 +85,14 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
     var pastDaysCount by remember { mutableIntStateOf(15) }
     var futureDaysCount by remember { mutableIntStateOf(15) }
 
-    LaunchedEffect(courseId) {
-        course = viewModel.getCourseById(courseId)
-        students = viewModel.getStudentsByCourseSync(courseId)
+    LaunchedEffect(selectedCourseId) {
+        if (selectedCourseId.isNotBlank()) {
+            course = viewModel.getCourseById(selectedCourseId)
+            students = viewModel.getStudentsByCourseSync(selectedCourseId)
+        } else {
+            course = null
+            students = emptyList()
+        }
     }
 
     val filteredStudents = remember(students, searchQuery) {
@@ -113,8 +127,8 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                 }
             } else if (slots.isEmpty()) {
                 val defaultSlot = ScheduleSlotEntity(
-                    id = "default_${d}_$courseId",
-                    courseId = courseId,
+                    id = "default_${d}_$selectedCourseId",
+                    courseId = selectedCourseId,
                     dayOfWeek = d.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH),
                     startTime = "Session",
                     endTime = "",
@@ -315,6 +329,23 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
             },
             containerColor = Color(0xFFF8F9FA)
         ) { paddingValues ->
+            if (allCourses.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+                        Icon(Icons.Default.Assessment, contentDescription = null, modifier = Modifier.size(56.dp), tint = Color(0xFF6750A4).copy(alpha = 0.6f))
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("No classes found", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color(0xFF0F172A))
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text("Please create or import a class to view its attendance register.", textAlign = TextAlign.Center, color = Color.Gray, fontSize = 13.sp)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(onClick = { navController.popBackStack() }) {
+                            Text("Go Back")
+                        }
+                    }
+                }
+                return@Scaffold
+            }
+
             if (students.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -332,6 +363,30 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
                     .padding(paddingValues)
                     .background(Color(0xFFF8F9FA))
             ) {
+                // Course Switcher (if teacher has multiple courses)
+                if (allCourses.size > 1) {
+                    LazyRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(allCourses) { c ->
+                            val isSel = c.id == selectedCourseId
+                            FilterChip(
+                                selected = isSel,
+                                onClick = { selectedCourseId = c.id },
+                                label = { Text(c.code.ifBlank { c.name }, fontSize = 12.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFEDE9FE),
+                                    selectedLabelColor = Color(0xFF6D28D9)
+                                )
+                            )
+                        }
+                    }
+                    HorizontalDivider(color = Color(0xFFE2E8F0), thickness = 0.8.dp)
+                }
                 // Optional Search Bar
                 AnimatedVisibility(visible = showSearchBar) {
                     Surface(
@@ -890,7 +945,7 @@ fun AttendanceReportScreen(navController: NavController, viewModel: MainViewMode
             onExport = { options ->
                 showExportDialog = false
                 isExporting = true
-                viewModel.exportAttendanceData(context, courseId, options) { file ->
+                viewModel.exportAttendanceData(context, selectedCourseId, options) { file ->
                     isExporting = false
                     if (file != null) {
                         Toast.makeText(context, "Export successful", Toast.LENGTH_SHORT).show()

@@ -127,8 +127,11 @@ class MainActivity : ComponentActivity() {
                             val batchId = backStackEntry.arguments?.getString("batchId")
                             com.example.ui.screens.AddEditBatchScreen(navController = navController, viewModel = viewModel, batchId = batchId)
                         }
+                        composable("attendance_report") {
+                            com.example.ui.screens.AttendanceReportScreen(navController = navController, viewModel = viewModel, courseId = null)
+                        }
                         composable("attendance_report/{courseId}") { backStackEntry ->
-                            val courseId = backStackEntry.arguments?.getString("courseId") ?: return@composable
+                            val courseId = backStackEntry.arguments?.getString("courseId")
                             com.example.ui.screens.AttendanceReportScreen(navController = navController, viewModel = viewModel, courseId = courseId)
                         }
                         composable("csv_import?courseId={courseId}", arguments = listOf(androidx.navigation.navArgument("courseId") { nullable = true; defaultValue = null })) { backStackEntry ->
