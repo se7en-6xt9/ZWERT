@@ -7,6 +7,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -50,6 +51,7 @@ import com.example.ui.components.FloatingGlassNavBar
 import com.example.ui.components.ScheduleBreakCard
 import com.example.ui.components.ScheduleTimelineItem
 import com.example.ui.components.buildChronologicalTimeline
+import com.example.ui.util.SubjectFormatting
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -233,6 +235,7 @@ fun DashboardContent(
                         } else {
                             LazyColumn(
                                 state = listState,
+                                flingBehavior = rememberSnapFlingBehavior(lazyListState = listState),
                                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 120.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
@@ -301,204 +304,273 @@ fun ElevatedFacultyProfileHeader(
     val userProfile by viewModel.userProfile.collectAsState()
     val isConnected by viewModel.isNetworkConnected.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
+    val isDarkTheme by viewModel.isDarkTheme.collectAsState()
     val name = userProfile?.name?.takeIf { it.isNotBlank() } ?: "Prof. Yash Thakur"
     val initials = name.split(" ").mapNotNull { it.firstOrNull()?.uppercase() }.take(2).joinToString("")
-
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.98f else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "profileScale"
-    )
     val haptic = LocalHapticFeedback.current
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    navController.navigate("profile")
-                }
-            ),
-        shape = RoundedCornerShape(24.dp),
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(
             1.dp,
-            if (isPressed) accentColor.copy(alpha = 0.40f)
+            if (isDarkTheme) Color.White.copy(alpha = 0.08f)
             else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
         ),
-        shadowElevation = if (isPressed) 1.dp else 3.dp
+        shadowElevation = 2.dp
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
-            // Modern gradient avatar with active status dot
-            Box(
-                contentAlignment = Alignment.BottomEnd
+            // Row 1: Avatar + Name + Action Buttons (Attendance Register, Theme Toggle, Profile)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                // Tappable Avatar with live status indicator
                 Box(
-                    modifier = Modifier
-                        .size(50.dp)
-                        .shadow(
-                            elevation = 6.dp,
-                            shape = CircleShape,
-                            spotColor = accentColor.copy(alpha = 0.35f),
-                            ambientColor = Color.Black.copy(alpha = 0.15f)
-                        )
-                        .clip(CircleShape)
-                        .background(
-                            Brush.linearGradient(
-                                colors = listOf(
-                                    Color(0xFF4F46E5),
-                                    Color(0xFF7C3AED),
-                                    Color(0xFF9333EA)
+                    modifier = Modifier.clickable {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        navController.navigate("profile")
+                    },
+                    contentAlignment = Alignment.BottomEnd
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .shadow(3.dp, CircleShape)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.linearGradient(
+                                    colors = listOf(
+                                        Color(0xFF4F46E5),
+                                        Color(0xFF7C3AED),
+                                        Color(0xFF9333EA)
+                                    )
                                 )
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = initials,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        letterSpacing = 0.5.sp
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = initials.ifEmpty { "YT" },
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+
+                    val statusDotColor = when {
+                        !isConnected -> Color(0xFFF59E0B)
+                        isSyncing -> accentColor
+                        else -> Color(0xFF10B981)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(11.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surface)
+                            .padding(2.dp)
+                            .clip(CircleShape)
+                            .background(statusDotColor)
                     )
                 }
 
-                // Active network status indicator
-                val statusDotColor = when {
-                    !isConnected -> Color(0xFFF59E0B)
-                    isSyncing -> accentColor
-                    else -> Color(0xFF10B981)
-                }
-                Box(
+                Spacer(modifier = Modifier.width(10.dp))
+
+                // Tappable Name & Subtitle
+                Column(
                     modifier = Modifier
-                        .size(13.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(2.dp)
-                        .clip(CircleShape)
-                        .background(statusDotColor)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(14.dp))
-
-            // Well-settled text info without any overlapping
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(end = 8.dp),
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                Spacer(modifier = Modifier.height(3.dp))
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        .weight(1f)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            navController.navigate("profile")
+                        }
                 ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = accentColor.copy(alpha = 0.14f),
+                            border = BorderStroke(0.8.dp, accentColor.copy(alpha = 0.32f))
+                        ) {
+                            Text(
+                                text = "Faculty",
+                                color = accentColor,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(2.dp))
+
                     Text(
-                        text = "Faculty Dashboard",
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        ),
-                        color = accentColor
-                    )
-                    Text(
-                        text = "•",
-                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
-                    Text(
-                        text = dateStr,
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Normal
-                        ),
+                        text = "Department of CSE • $dateStr",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                Spacer(modifier = Modifier.height(2.dp))
+                // Action buttons: Register, Theme Toggle, Profile
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Dedicated Attendance Register Button
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.7f)
+                                else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                            )
+                            .clickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                navController.navigate("attendance_report")
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Assessment,
+                            contentDescription = "Attendance Register",
+                            tint = accentColor,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    // Theme Toggle Button
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.7f) else Color(0xFFF1F5F9))
+                            .clickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.toggleDarkTheme()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isDarkTheme) Icons.Default.DarkMode else Icons.Default.LightMode,
+                            contentDescription = "Toggle Theme",
+                            tint = if (isDarkTheme) Color(0xFFF59E0B) else accentColor,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    // Profile Chevron
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.7f) else Color(0xFFF1F5F9))
+                            .clickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                navController.navigate("profile")
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "Profile",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Row 2: Combined Compact Sync / Register Strip
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        if (isDarkTheme) Color(0xFF0F172A).copy(alpha = 0.7f)
+                        else Color(0xFFF8FAFC)
+                    )
+                    .border(
+                        0.8.dp,
+                        if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.5f)
+                        else Color(0xFFE2E8F0),
+                        RoundedCornerShape(10.dp)
+                    )
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                val statusDotColor = when {
+                    !isConnected -> Color(0xFFF59E0B)
+                    isSyncing -> accentColor
+                    else -> Color(0xFF10B981)
+                }
+                val statusText = when {
+                    !isConnected -> "Offline • Persistent Cache"
+                    isSyncing -> "Syncing with cloud..."
+                    else -> "Cloud synced"
+                }
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    modifier = Modifier.clickable { viewModel.triggerSync() }
                 ) {
-                    val statusDotColor = when {
-                        !isConnected -> Color(0xFFF59E0B)
-                        isSyncing -> accentColor
-                        else -> Color(0xFF10B981)
-                    }
-                    val statusText = when {
-                        !isConnected -> "Offline • Persistent Cache"
-                        isSyncing -> "Syncing with cloud..."
-                        else -> "Cloud synced"
-                    }
                     Box(
                         modifier = Modifier
                             .size(6.dp)
                             .clip(CircleShape)
                             .background(statusDotColor)
                     )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = statusText,
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Medium
-                        ),
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                        fontWeight = FontWeight.Medium,
                         color = statusDotColor
                     )
                 }
-            }
 
-            // Interactive chevron indicator
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (isPressed) accentColor.copy(alpha = 0.15f)
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = "View Profile",
-                    tint = if (isPressed) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
-                )
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = accentColor.copy(alpha = 0.12f),
+                    border = BorderStroke(0.6.dp, accentColor.copy(alpha = 0.30f)),
+                    modifier = Modifier.clickable {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        navController.navigate("attendance_report")
+                    }
+                ) {
+                    Text(
+                        text = "Register Ready",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp),
+                        fontWeight = FontWeight.Bold,
+                        color = accentColor,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
             }
         }
     }
@@ -538,27 +610,26 @@ fun DaySelectorCard(
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
             .shadow(
-                elevation = 4.dp,
-                shape = RoundedCornerShape(22.dp),
-                spotColor = Color.Black.copy(alpha = 0.12f),
-                ambientColor = Color.Black.copy(alpha = 0.06f)
+                elevation = 3.dp,
+                shape = RoundedCornerShape(16.dp),
+                spotColor = Color.Black.copy(alpha = 0.08f)
             )
-            .clip(RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(
                 if (isDarkTheme) Color(0xFF1E1E24).copy(alpha = 0.65f)
-                else Color(0xFFFFFFFF).copy(alpha = 0.75f)
+                else Color(0xFFFFFFFF).copy(alpha = 0.85f)
             )
             .border(
                 1.dp,
                 if (isDarkTheme) Color.White.copy(alpha = 0.08f)
-                else Color.White.copy(alpha = 0.55f),
-                RoundedCornerShape(22.dp)
+                else Color.White.copy(alpha = 0.60f),
+                RoundedCornerShape(16.dp)
             )
     ) {
         ScrollableTabRow(
             selectedTabIndex = pagerState.currentPage,
             containerColor = Color.Transparent,
-            edgePadding = 12.dp,
+            edgePadding = 8.dp,
             divider = {},
             indicator = { tabPositions ->
                 if (pagerState.currentPage < tabPositions.size) {
@@ -601,19 +672,17 @@ fun DaySelectorCard(
                             .offset(x = animatedLeft)
                             .width(animatedWidth)
                             .fillMaxHeight()
-                            .padding(vertical = 7.dp, horizontal = 4.dp)
+                            .padding(vertical = 4.dp, horizontal = 2.dp)
                             .shadow(
-                                elevation = 8.dp,
-                                shape = RoundedCornerShape(18.dp),
-                                spotColor = Color(0xFF6366F1).copy(alpha = 0.55f),
-                                ambientColor = Color(0xFF8B5CF6).copy(alpha = 0.35f)
+                                elevation = 4.dp,
+                                shape = RoundedCornerShape(12.dp),
+                                spotColor = Color(0xFF6366F1).copy(alpha = 0.45f)
                             )
-                            .clip(RoundedCornerShape(18.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(
-                                Brush.verticalGradient(
+                                Brush.horizontalGradient(
                                     colors = listOf(
                                         Color(0xFF6366F1),
-                                        Color(0xFF7C3AED),
                                         Color(0xFF8B5CF6)
                                     )
                                 )
@@ -632,34 +701,34 @@ fun DaySelectorCard(
                         coroutineScope.launch { pagerState.animateScrollToPage(index) }
                     },
                     modifier = Modifier
-                        .height(78.dp)
+                        .height(44.dp)
                         .zIndex(1f),
                     selectedContentColor = Color.White,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Text(
-                            text = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH),
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
-                            fontSize = 13.sp,
+                            text = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).take(3),
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 12.sp,
                             color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = date.dayOfMonth.toString(),
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 19.sp,
+                            fontSize = 13.5.sp,
                             color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
                         if (date == today) {
+                            Spacer(modifier = Modifier.width(4.dp))
                             Box(
                                 modifier = Modifier
-                                    .size(6.dp)
+                                    .size(5.dp)
                                     .graphicsLayer {
                                         scaleX = pulseScale
                                         scaleY = pulseScale
@@ -668,8 +737,6 @@ fun DaySelectorCard(
                                     .clip(CircleShape)
                                     .background(if (isSelected) Color.White else Color(0xFF6366F1))
                             )
-                        } else {
-                            Box(modifier = Modifier.size(6.dp))
                         }
                     }
                 }
@@ -681,7 +748,7 @@ fun DaySelectorCard(
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .width(20.dp)
+                    .width(16.dp)
                     .fillMaxHeight()
                     .background(
                         Brush.horizontalGradient(
@@ -700,7 +767,7 @@ fun DaySelectorCard(
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .width(20.dp)
+                    .width(16.dp)
                     .fillMaxHeight()
                     .background(
                         Brush.horizontalGradient(
@@ -760,94 +827,16 @@ fun GlassLectureCard(
             )
             
             Column(modifier = Modifier.padding(20.dp).fillMaxWidth()) {
-                val courseName = course?.name?.takeIf { it.isNotBlank() }
-                val courseCode = course?.code?.takeIf { it.isNotBlank() }
+                val shortLabel = SubjectFormatting.getShortLabel(course, slot.courseId)
+                val fullName = SubjectFormatting.getFullName(course, slot.courseId)
 
-                val subjectText: String
-                val batchText: String
-
-                if (!courseName.isNullOrBlank()) {
-                    subjectText = courseName
-                    batchText = if (!courseCode.isNullOrBlank() && courseCode != courseName) {
-                        if (slot.section.isNotBlank()) "$courseCode • Sec ${slot.section}" else courseCode
+                val subjectText = shortLabel
+                val batchText = buildString {
+                    if (fullName.isNotBlank() && !fullName.equals(shortLabel, ignoreCase = true)) {
+                        append(fullName)
+                        if (slot.section.isNotBlank()) append(" • Sec ${slot.section}")
                     } else if (slot.section.isNotBlank()) {
-                        "Sec ${slot.section}"
-                    } else {
-                        ""
-                    }
-                } else if (!courseCode.isNullOrBlank()) {
-                    subjectText = courseCode
-                    batchText = if (slot.section.isNotBlank()) "Sec ${slot.section}" else ""
-                } else {
-                    val parts = slot.courseId.split("-")
-                    if (parts.size >= 4 && parts[1].contains("SEM", ignoreCase = true)) {
-                        val branch = parts[0]
-                        val semStr = parts[1]
-                        val subjectCode = parts.drop(3).joinToString("-") 
-                        
-                        var admissionYearText = ""
-                        val sem = if (semStr.endsWith("SEM", ignoreCase = true)) {
-                            val num = semStr.dropLast(3)
-                            val suffix = when (num) {
-                                "1" -> "1st"
-                                "2" -> "2nd"
-                                "3" -> "3rd"
-                                "4" -> "4th"
-                                "5" -> "5th"
-                                "6" -> "6th"
-                                "7" -> "7th"
-                                "8" -> "8th"
-                                else -> num
-                            }
-                            val currentYear = LocalDate.now().year
-                            val currentMonth = LocalDate.now().monthValue
-                            val academicYearStart = if (currentMonth >= 7) currentYear else currentYear - 1
-                            val semInt = num.toIntOrNull() ?: 1
-                            val admissionYear = academicYearStart - ((semInt - 1) / 2)
-                            admissionYearText = " - $admissionYear"
-                            "$suffix Sem"
-                        } else semStr
-                        
-                        val expandedSubject = when(subjectCode.uppercase()) {
-                            "DBMS" -> "Database Management Systems"
-                            "OS" -> "Operating Systems"
-                            "CN" -> "Computer Networks"
-                            "DSA" -> "Data Structures & Algorithms"
-                            "AI" -> "Artificial Intelligence"
-                            "ML" -> "Machine Learning"
-                            "SE" -> "Software Engineering"
-                            "CS301" -> "Computer Architecture"
-                            "CS302" -> "Computer Networks"
-                            else -> subjectCode
-                        }
-                        subjectText = expandedSubject
-                        batchText = "$branch - $sem$admissionYearText"
-                    } else if (parts.size == 3 && parts[1].contains("SEM", ignoreCase = true)) {
-                        val branch = parts[0]
-                        val semStr = parts[1]
-                        var admissionYearText = ""
-                        val sem = if (semStr.endsWith("SEM", ignoreCase = true)) {
-                            val num = semStr.dropLast(3)
-                            val suffix = when (num) { 
-                                "1" -> "1st"
-                                "2" -> "2nd"
-                                "3" -> "3rd"
-                                "4" -> "4th"
-                                else -> num 
-                            }
-                            val currentYear = LocalDate.now().year
-                            val currentMonth = LocalDate.now().monthValue
-                            val academicYearStart = if (currentMonth >= 7) currentYear else currentYear - 1
-                            val semInt = num.toIntOrNull() ?: 1
-                            val admissionYear = academicYearStart - ((semInt - 1) / 2)
-                            admissionYearText = " - $admissionYear"
-                            "$suffix Sem"
-                        } else semStr
-                        subjectText = parts[2]
-                        batchText = "$branch - $sem$admissionYearText"
-                    } else {
-                        subjectText = "Class Lecture"
-                        batchText = if (slot.section.isNotBlank()) "Sec ${slot.section}" else ""
+                        append("Sec ${slot.section}")
                     }
                 }
 

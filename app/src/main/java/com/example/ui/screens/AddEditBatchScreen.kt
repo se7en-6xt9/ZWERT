@@ -383,7 +383,13 @@ fun AddEditBatchScreen(
                                 
                                 AnimatedTextField(
                                     value = courseName,
-                                    onValueChange = { courseName = it },
+                                    onValueChange = { newName ->
+                                        val oldAbbrev = com.example.ui.util.SubjectFormatting.generateAbbreviation(courseName)
+                                        courseName = newName
+                                        if (courseCode.isBlank() || courseCode.equals(oldAbbrev, ignoreCase = true)) {
+                                            courseCode = com.example.ui.util.SubjectFormatting.generateAbbreviation(newName)
+                                        }
+                                    },
                                     label = "Course Name *",
                                     modifier = Modifier.fillMaxWidth(),
                                     isError = courseName.isBlank(),

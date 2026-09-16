@@ -47,12 +47,16 @@ object AiHelper {
                 The student is providing class routine text, syllabus, photo/screenshot of routine, or timetable notes.
                 Extract all courses/subjects the student attends and map each into our schema:
                 - Each subject the student attends becomes an entry in "batches":
-                  - "course": { "name": "Subject/Course Name", "code": "Course Code or null" }
+                  - "course": { 
+                      "name": "Full Course/Subject Name", 
+                      "code": "Course Code (e.g. CS301) or null",
+                      "shortName": "Short abbreviation/acronym (e.g. IBE for Introduction to Biology for Engineers, DBMS, OS, DSA)"
+                    }
                   - "section": Student's section or class (e.g. "Section B", "Semester 3") or null
                   - "location": Default lecture hall/room/lab (e.g. "Room 204", "Physics Lab") or null
                   - "weeklySchedule": Array of weekly class timings:
                     - "day": Day of the week (e.g. "Monday", "Tuesday", etc.)
-                    - "time": Class timing (e.g. "09:00 - 10:00 AM", "11:30 AM")
+                    - "time": Class timing (e.g. "09:00 - 10:00 AM", "02:00 PM - 03:00 PM")
                     - "location": Room/Lab if specific to that slot or null
                   - "students": [] (empty array for students)
                 - "teacher": Instructor/Professor name if mentioned in the input, or null
@@ -63,7 +67,11 @@ object AiHelper {
                 The teacher is providing class schedules, student rosters, timetable photos, or notes.
                 Extract all batches the teacher conducts:
                 - Every unique combination of course + section/batch is ONE batch entry in "batches":
-                  - "course": { "name": "Course/Subject Name", "code": "Course Code or null" }
+                  - "course": { 
+                      "name": "Full Course/Subject Name", 
+                      "code": "Course Code (e.g. CS301) or null",
+                      "shortName": "Short abbreviation/acronym (e.g. IBE for Introduction to Biology for Engineers, DBMS, OS, DSA)"
+                    }
                   - "year": Academic year or null
                   - "semester": Semester or null
                   - "section": Section or Class name (e.g. "CSE-A", "Class 10")
@@ -80,18 +88,37 @@ object AiHelper {
                 Universal Extraction Guidelines:
                 1. ANALYZE AND FIT: Fit whatever information is present in the input into our structure.
                    Even if the user provides informal or partial notes (e.g. "Maths Mon 9am room 101, Physics Wed 11am"), extract them into batches and weekly schedules accurately.
-                2. IDENTIFY MISSING FIELDS:
+
+                2. SUBJECT ABBREVIATION & SHORT CODES:
+                   - When encountering a long subject name (e.g. "Introduction to Biology for Engineers"), generate a clean short abbreviation/acronym (e.g. "IBE", "DBMS", "OS", "DSA", "SE", "CN") and store it in the "shortName" field.
+                   - If a subject code (e.g. "CS301") is already present, reuse that as the "code" field.
+
+                3. AM/PM TIME PARSING & INFERENCE RULE:
+                   When a time in the source timetable does NOT explicitly specify AM or PM, infer it using this rule:
+                   Assume all class times fall within a typical academic day window of 6:00 AM to 6:00 PM (18:00). Apply standard 12-hour clock logic within that window:
+                   - Hours 6 through 11 (e.g. "06:00", "09:00", "11:00") -> AM.
+                   - Hour 12 (e.g. "12:00") -> PM (noon).
+                   - Hours 1 through 6 written as "01:00" through "06:00" appearing AFTER a 12:00 or after clearly-morning entries in the same day's sequence -> PM (e.g. "02:00 to 04:00" -> "02:00 PM - 04:00 PM", "12:00 to 1:00" -> "12:00 PM - 01:00 PM").
+                   - Use the sequence/order of classes within the same day as a consistency check — times should generally increase through the day (morning -> afternoon -> evening); if a literal interpretation would make a later-listed class appear earlier than an earlier-listed one, prefer the interpretation that keeps the day's sequence chronological.
+
+                4. BREAK & FREE TIME HANDLING:
+                   DO NOT assume a time gap between classes is automatically a lunch/meal break — only label a slot as "Break" or "Lunch" if the source timetable EXPLICITLY labels it as such (e.g. a cell literally says "Lunch," "Break," or spells it out like "L-U-N-C-H" across the row). If there is a gap in the schedule with NO explicit break label, extract it as an unscheduled/free gap — represent this by simply NOT creating a class entry for that slot (leave it out of weeklySchedule rather than inventing a "Break" entry), so the app's UI can show it as "Free" time based on the absence of a scheduled class, not a guessed label.
+
+                5. IDENTIFY MISSING FIELDS:
                    Identify any fields from the standard structure that could NOT be found or were incomplete (such as missing section, missing room/location, missing timings, missing student list, missing teacher name, etc.).
                    List each missing field clearly in the "missingFields" string array (e.g. ["Location missing for Physics", "Section not specified", "Student list not provided"]).
-                3. PROVIDE HELPFUL SUMMARY:
+
+                6. PROVIDE HELPFUL SUMMARY:
                    In the "summary" string field, provide a clear, concise summary in natural language explaining what was extracted and which fields were missing or need the user's attention.
-                4. VAGUE / INVALID INPUT HANDLING:
+
+                7. VAGUE / INVALID INPUT HANDLING:
                    If the input contains no recognizable classes, subjects, or timetable information (e.g. random text like "gyy"), DO NOT throw an error. Instead, return:
                    - "batches": []
                    - "teacher": null
                    - "missingFields": ["timetable_data", "subject_names", "class_timings", "schedule_days"]
                    - "summary": "No classes, subjects, or timings could be recognized from the input. Please enter subject names, days, and times, or upload a timetable photo."
-                5. Output MUST strictly be valid JSON matching this schema:
+
+                8. Output MUST strictly be valid JSON matching this schema:
                 {
                   "teacher": { "name": string|null, "id": string|null },
                   "batches": [
@@ -99,7 +126,7 @@ object AiHelper {
                       "batchId": string|null,
                       "year": string|null,
                       "semester": string|null,
-                      "course": { "code": string|null, "name": string },
+                      "course": { "code": string|null, "name": string, "shortName": string|null },
                       "section": string|null,
                       "location": string|null,
                       "weeklySchedule": [

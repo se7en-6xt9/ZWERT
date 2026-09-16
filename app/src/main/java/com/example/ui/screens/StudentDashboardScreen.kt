@@ -6,6 +6,7 @@ import android.media.ToneGenerator
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -47,6 +48,7 @@ import com.example.ui.components.ScheduleBreakCard
 import com.example.ui.components.ScheduleTimelineItem
 import com.example.ui.components.buildChronologicalTimeline
 import com.example.ui.util.SoundFeedbackHelper
+import com.example.ui.util.SubjectFormatting
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -251,6 +253,7 @@ fun StudentDashboardContent(
                         } else {
                             LazyColumn(
                                 state = listState,
+                                flingBehavior = rememberSnapFlingBehavior(lazyListState = listState),
                                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 120.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
@@ -401,33 +404,23 @@ fun ElevatedStudentProfileHeader(
         label = "headerPctAnim"
     )
 
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.98f else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "profileScale"
-    )
+    val pendingSyncCount by viewModel.pendingSyncCount.collectAsState(initial = 0)
+    val isEngineSyncing by viewModel.isEngineSyncing.collectAsState(initial = false)
+    val isOnline by viewModel.isNetworkConnected.collectAsState()
+
     val haptic = LocalHapticFeedback.current
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
+            .padding(horizontal = 16.dp, vertical = 2.dp)
             .shadow(
-                elevation = 4.dp,
-                shape = RoundedCornerShape(26.dp),
-                spotColor = accentColor.copy(alpha = 0.20f),
-                ambientColor = Color.Black.copy(alpha = 0.10f)
+                elevation = 3.dp,
+                shape = RoundedCornerShape(20.dp),
+                spotColor = accentColor.copy(alpha = 0.15f),
+                ambientColor = Color.Black.copy(alpha = 0.06f)
             ),
-        shape = RoundedCornerShape(26.dp),
+        shape = RoundedCornerShape(20.dp),
         color = if (isDarkTheme) Color(0xFF1E293B) else Color.White,
         border = BorderStroke(
             1.dp,
@@ -437,28 +430,26 @@ fun ElevatedStudentProfileHeader(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(18.dp)
+                .padding(horizontal = 14.dp, vertical = 12.dp)
         ) {
-            // 1. TOP HEADER ROW: AVATAR + NAME & DETAILS + PROFILE CHEVRON
+            // 1. TOP ROW: AVATAR (tap profile) + NAME & SUBTITLE (tap profile) + REGISTER + THEME + CHEVRON
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(
-                        interactionSource = interactionSource,
-                        indication = null,
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            navController.navigate("profile")
-                        }
-                    ),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Avatar with smooth gradient and active status badge
-                Box(contentAlignment = Alignment.BottomEnd) {
+                Box(
+                    modifier = Modifier
+                        .clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            navController.navigate("profile")
+                        },
+                    contentAlignment = Alignment.BottomEnd
+                ) {
                     Box(
                         modifier = Modifier
-                            .size(50.dp)
-                            .shadow(4.dp, CircleShape)
+                            .size(42.dp)
+                            .shadow(3.dp, CircleShape)
                             .clip(CircleShape)
                             .background(
                                 Brush.linearGradient(
@@ -469,7 +460,7 @@ fun ElevatedStudentProfileHeader(
                     ) {
                         Text(
                             text = initials.ifEmpty { "SS" },
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Black,
                             color = Color.White
                         )
@@ -478,7 +469,7 @@ fun ElevatedStudentProfileHeader(
                     // Online / Cloud sync indicator dot
                     Box(
                         modifier = Modifier
-                            .size(14.dp)
+                            .size(12.dp)
                             .clip(CircleShape)
                             .background(if (isDarkTheme) Color(0xFF1E293B) else Color.White)
                             .padding(2.dp)
@@ -488,22 +479,30 @@ fun ElevatedStudentProfileHeader(
                                 .fillMaxSize()
                                 .clip(CircleShape)
                                 .background(
-                                    if (isSyncing) Color(0xFFF59E0B)
-                                    else if (isConnected) Color(0xFF10B981)
+                                    if (isSyncing || isEngineSyncing) Color(0xFFF59E0B)
+                                    else if (isOnline && isConnected) Color(0xFF10B981)
                                     else Color(0xFF94A3B8)
                                 )
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.width(14.dp))
+                Spacer(modifier = Modifier.width(10.dp))
 
-                Column(modifier = Modifier.weight(1f)) {
+                // Name & Academic Details (Clickable -> Profile)
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            navController.navigate("profile")
+                        }
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = name,
                             style = MaterialTheme.typography.titleMedium.copy(
-                                fontSize = 17.sp,
+                                fontSize = 15.5.sp,
                                 fontWeight = FontWeight.Bold
                             ),
                             color = MaterialTheme.colorScheme.onSurface,
@@ -512,35 +511,68 @@ fun ElevatedStudentProfileHeader(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Surface(
-                            shape = RoundedCornerShape(6.dp),
+                            shape = RoundedCornerShape(5.dp),
                             color = Color(0xFF10B981).copy(alpha = 0.14f),
-                            border = BorderStroke(0.8.dp, Color(0xFF10B981).copy(alpha = 0.32f))
+                            border = BorderStroke(0.8.dp, Color(0xFF10B981).copy(alpha = 0.30f))
                         ) {
                             Text(
                                 text = "Student",
                                 color = Color(0xFF059669),
-                                style = MaterialTheme.typography.labelSmall,
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                                 fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(2.dp))
+                    Spacer(modifier = Modifier.height(1.dp))
 
                     Text(
                         text = "$branchInfo • $dateStr",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                // Quick Theme Toggle button (Dark / Light) with SharedPreferences persistence
+                // Dedicated Attendance Register Button
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF10B981).copy(alpha = 0.12f),
+                    border = BorderStroke(0.8.dp, Color(0xFF10B981).copy(alpha = 0.30f)),
+                    modifier = Modifier
+                        .clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            navController.navigate("student_report")
+                        }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Assessment,
+                            contentDescription = "Attendance Register",
+                            tint = Color(0xFF059669),
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (stats.second > 0) "${String.format(Locale.ENGLISH, "%.0f", pct)}%" else "Register",
+                            color = Color(0xFF059669),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // Quick Theme Toggle button (Dark / Light)
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(32.dp)
                         .clip(CircleShape)
                         .background(if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.6f) else Color(0xFFF1F5F9))
                         .clickable {
@@ -553,158 +585,103 @@ fun ElevatedStudentProfileHeader(
                         imageVector = if (isDarkTheme) Icons.Default.DarkMode else Icons.Default.LightMode,
                         contentDescription = "Toggle Theme",
                         tint = if (isDarkTheme) Color(0xFFF59E0B) else Color(0xFF6366F1),
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(16.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(4.dp))
 
-                // Profile chevron button
+                // Profile Chevron
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(32.dp)
                         .clip(CircleShape)
-                        .background(if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.6f) else Color(0xFFF1F5F9)),
+                        .background(if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.6f) else Color(0xFFF1F5F9))
+                        .clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            navController.navigate("profile")
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                         contentDescription = "Profile",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
 
-            val pendingSyncCount by viewModel.pendingSyncCount.collectAsState(initial = 0)
-            val isEngineSyncing by viewModel.isEngineSyncing.collectAsState(initial = false)
-            val isOnline by viewModel.isNetworkConnected.collectAsState()
+            Spacer(modifier = Modifier.height(8.dp))
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Sync Status Pill (Offline-First SSOT Indicator)
+            // 2. COMPACT SECONDARY STATUS STRIP: ATTENDANCE RATIO + SSOT CLOUD SYNC
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(8.dp))
                     .background(
-                        if (pendingSyncCount > 0 || !isOnline) Color(0xFFFEF3C7).copy(alpha = 0.8f)
-                        else Color(0xFFF0FDF4).copy(alpha = 0.8f)
+                        if (isDarkTheme) Color(0xFF0F172A).copy(alpha = 0.5f)
+                        else Color(0xFFF8FAFC)
                     )
-                    .clickable {
-                        viewModel.triggerSync()
-                    }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .border(
+                        0.8.dp,
+                        if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.4f)
+                        else Color(0xFFE2E8F0),
+                        RoundedCornerShape(8.dp)
+                    )
+                    .padding(horizontal = 8.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = if (isEngineSyncing) Icons.Default.Sync else if (pendingSyncCount > 0 || !isOnline) Icons.Default.CloudOff else Icons.Default.CloudDone,
-                        contentDescription = null,
-                        tint = if (pendingSyncCount > 0 || !isOnline) Color(0xFFD97706) else Color(0xFF059669),
-                        modifier = Modifier.size(16.dp)
+                // Attendance Quick Stat (Clickable -> Register)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            navController.navigate("student_report")
+                        }
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(statusColor)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (isEngineSyncing) "Syncing with cloud..." else if (pendingSyncCount > 0) "$pendingSyncCount offline queued • Tap to sync" else if (!isOnline) "Offline • Local SSOT active" else "Synced with cloud",
-                        style = MaterialTheme.typography.labelSmall,
+                        text = if (stats.second > 0) "${stats.first}/${stats.second} attended (${String.format(Locale.ENGLISH, "%.1f", animatedPct)}%)" else "Attendance ready to record",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                         fontWeight = FontWeight.SemiBold,
-                        color = if (pendingSyncCount > 0 || !isOnline) Color(0xFF92400E) else Color(0xFF065F46)
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                Text(
-                    text = "SSOT",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (pendingSyncCount > 0 || !isOnline) Color(0xFFB45309) else Color(0xFF047857)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-            HorizontalDivider(
-                color = if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.6f) else Color(0xFFF1F5F9),
-                thickness = 1.dp
-            )
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // 2. INTEGRATED STATS ROW: ATTENDANCE SUMMARY + PROGRESS RING
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        navController.navigate("student_report")
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = if (stats.second > 0) "${String.format(Locale.ENGLISH, "%.1f", animatedPct)}%" else "—",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Black,
-                            color = statusColor
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = statusColor.copy(alpha = 0.14f),
-                            border = BorderStroke(0.8.dp, statusColor.copy(alpha = 0.32f))
-                        ) {
-                            Text(
-                                text = when {
-                                    stats.second == 0 -> "No sessions yet"
-                                    pct >= 75f -> "Eligible (≥75%)"
-                                    pct >= 50f -> "Borderline"
-                                    else -> "Shortage Alert"
-                                },
-                                color = statusColor,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Text(
-                        text = if (stats.second > 0) "${stats.first} of ${stats.second} lectures attended" else "Attendance will track as classes occur",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                // Smooth Circular Progress Ring with tap register indicator
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier.size(52.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(
-                            progress = { if (stats.second > 0) (animatedPct / 100f).coerceIn(0f, 1f) else 0f },
-                            modifier = Modifier.size(52.dp),
-                            strokeWidth = 5.dp,
-                            color = statusColor,
-                            trackColor = if (isDarkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)
-                        )
-                        Icon(
-                            imageVector = if (isEligible) Icons.Default.CheckCircle else Icons.Default.Warning,
-                            contentDescription = null,
-                            tint = statusColor,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
+                // Cloud Sync Indicator
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable { viewModel.triggerSync() }
+                ) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = "View Register",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                        modifier = Modifier.size(16.dp)
+                        imageVector = if (isEngineSyncing || isSyncing) Icons.Default.Sync
+                        else if (pendingSyncCount > 0 || !isOnline) Icons.Default.CloudOff
+                        else Icons.Default.CloudDone,
+                        contentDescription = null,
+                        tint = if (pendingSyncCount > 0 || !isOnline) Color(0xFFD97706) else Color(0xFF059669),
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (isEngineSyncing || isSyncing) "Syncing..."
+                        else if (pendingSyncCount > 0) "$pendingSyncCount queued"
+                        else if (!isOnline) "Offline"
+                        else "SSOT Synced",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp),
+                        fontWeight = FontWeight.Bold,
+                        color = if (pendingSyncCount > 0 || !isOnline) Color(0xFFD97706) else Color(0xFF059669)
                     )
                 }
             }
@@ -771,27 +748,17 @@ fun StudentGlassLectureCard(
             )
 
             Column(modifier = Modifier.padding(20.dp).fillMaxWidth()) {
-                val courseName = course?.name?.takeIf { it.isNotBlank() }
-                val courseCode = course?.code?.takeIf { it.isNotBlank() }
+                val shortLabel = SubjectFormatting.getShortLabel(course, slot.courseId)
+                val fullName = SubjectFormatting.getFullName(course, slot.courseId)
 
-                val subjectText: String
-                val batchText: String
-
-                if (!courseName.isNullOrBlank()) {
-                    subjectText = courseName
-                    batchText = if (!courseCode.isNullOrBlank() && courseCode != courseName) {
-                        if (slot.section.isNotBlank()) "$courseCode • Sec ${slot.section}" else courseCode
+                val subjectText = shortLabel
+                val batchText = buildString {
+                    if (fullName.isNotBlank() && !fullName.equals(shortLabel, ignoreCase = true)) {
+                        append(fullName)
+                        if (slot.section.isNotBlank()) append(" • Sec ${slot.section}")
                     } else if (slot.section.isNotBlank()) {
-                        "Sec ${slot.section}"
-                    } else {
-                        ""
+                        append("Sec ${slot.section}")
                     }
-                } else if (!courseCode.isNullOrBlank()) {
-                    subjectText = courseCode
-                    batchText = if (slot.section.isNotBlank()) "Sec ${slot.section}" else ""
-                } else {
-                    subjectText = "Course Lecture"
-                    batchText = if (slot.section.isNotBlank()) "Sec ${slot.section}" else ""
                 }
 
                 Row(

@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
@@ -138,6 +140,10 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
         )
     }
 
+    val userRole by viewModel.userRole.collectAsState()
+    val isStudent = userRole.equals("student", ignoreCase = true)
+    val roleLabel = if (isStudent) "Student" else "Faculty Member"
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -150,8 +156,8 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                 },
                 actions = {
                     IconButton(onClick = {
-                        editName = userProfile?.name ?: "Prof. Yash Thakur"
-                        editSubject = userProfile?.subject ?: "Computer Science & Engineering"
+                        editName = userProfile?.name ?: (if (isStudent) "Student User" else "Prof. Yash Thakur")
+                        editSubject = userProfile?.subject ?: (if (isStudent) "B.Tech Computer Science" else "Computer Science & Engineering")
                         editInstitute = userProfile?.institute ?: "Department of CSE"
                         showEditProfileDialog = true
                     }) {
@@ -166,35 +172,46 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(24.dp),
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Box(
                 modifier = Modifier
-                    .size(120.dp)
+                    .size(110.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                Text(userProfile?.name?.takeIf { it.isNotBlank() }?.let { name -> name.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("") } ?: "YT", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold, fontSize = 48.sp)
+                val initials = userProfile?.name?.takeIf { it.isNotBlank() }
+                    ?.split(" ")
+                    ?.mapNotNull { it.firstOrNull()?.toString() }
+                    ?.take(2)
+                    ?.joinToString("") ?: (if (isStudent) "ST" else "YT")
+                Text(
+                    text = initials,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 42.sp
+                )
             }
             
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(18.dp))
             
             Text(
-                text = userProfile?.name?.takeIf { it.isNotBlank() } ?: "Prof. Yash Thakur",
+                text = userProfile?.name?.takeIf { it.isNotBlank() } ?: (if (isStudent) "Student User" else "Prof. Yash Thakur"),
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.ExtraBold,
                 color = MaterialTheme.colorScheme.onBackground
             )
             
             Text(
-                text = userProfile?.subject?.takeIf { it.isNotBlank() } ?: "Computer Science & Engineering",
+                text = userProfile?.subject?.takeIf { it.isNotBlank() } ?: (if (isStudent) "B.Tech Computer Science" else "Computer Science & Engineering"),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(24.dp))
             
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -207,7 +224,7 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
                             Text("Institute", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(userProfile?.institute?.takeIf { it.isNotBlank() } ?: "Not Set", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                            Text(userProfile?.institute?.takeIf { it.isNotBlank() } ?: "Department of CSE", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                         }
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
@@ -216,7 +233,7 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
                             Text("Email", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(email?.takeIf { it.isNotBlank() } ?: "yash.thakur@university.edu", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                            Text(email?.takeIf { it.isNotBlank() } ?: "user@university.edu", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                         }
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
@@ -286,7 +303,7 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
                             Text("Role", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("Faculty Member", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                            Text(roleLabel, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                         }
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
@@ -325,12 +342,12 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                 }
             }
             
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(28.dp))
             
             // Wipe Data Dev Button
             OutlinedButton(
                 onClick = { showWipeDialog = true },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
@@ -338,19 +355,19 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                 Icon(Icons.Default.DeleteForever, contentDescription = null)
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Wipe All My Data (Dev Mode)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("Wipe All My Data (Dev Mode)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     Text("Visible during development only", fontSize = 10.sp, color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f))
                 }
             }
             
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
             
             Button(
                 onClick = {
                     viewModel.signOut()
                     navController.navigate("login") { popUpTo(0) }
                 },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer)
             ) {
@@ -358,6 +375,8 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                 Spacer(modifier = Modifier.width(12.dp))
                 Text("Logout", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }

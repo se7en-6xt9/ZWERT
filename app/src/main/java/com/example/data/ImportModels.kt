@@ -31,7 +31,8 @@ data class BatchImport(
 @JsonClass(generateAdapter = true)
 data class CourseImport(
     val code: String? = null,
-    val name: String? = null
+    val name: String? = null,
+    val shortName: String? = null
 )
 
 @JsonClass(generateAdapter = true)

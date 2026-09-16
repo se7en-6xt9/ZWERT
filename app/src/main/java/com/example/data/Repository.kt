@@ -25,8 +25,12 @@ class Repository(val dao: AppDao) {
             val newSlots = mutableListOf<ScheduleSlotEntity>()
             data.batches?.forEach { batch ->
                 val courseId = batch.batchId?.takeIf { it.isNotBlank() } ?: "batch_${java.util.UUID.randomUUID()}"
-                val courseCode = batch.course?.code?.takeIf { it.isNotBlank() } ?: "Unknown Code"
-                val courseName = batch.course?.name?.takeIf { it.isNotBlank() } ?: "Unknown Course"
+                val rawName = batch.course?.name?.takeIf { it.isNotBlank() } ?: "Unknown Course"
+                val rawCode = batch.course?.code?.takeIf { it.isNotBlank() && it != "Unknown Code" }
+                    ?: batch.course?.shortName?.takeIf { it.isNotBlank() }
+                    ?: com.example.ui.util.SubjectFormatting.generateAbbreviation(rawName)
+                val courseCode = rawCode
+                val courseName = rawName
                 val section = batch.section ?: ""
                 val defaultLocation = batch.location ?: ""
                 newCourses.add(CourseEntity(courseId, courseName, courseCode, 0))
