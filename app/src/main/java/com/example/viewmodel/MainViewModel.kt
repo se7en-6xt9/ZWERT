@@ -30,6 +30,9 @@ import com.squareup.moshi.Moshi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.tasks.await
@@ -1302,8 +1305,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val currentAuth = auth
                 val currentFirestore = firestore
-                val uid = currentAuth?.currentUser?.uid
-                if (currentFirestore != null && uid != null) {
+                val uid = currentAuth?.currentUser?.uid ?: currentActiveUserId
+                if (currentFirestore != null && uid.isNotBlank()) {
                     // 1. Delete user's own batches and their subcollections (students, attendance)
                     val batchesRef = currentFirestore.collection("users").document(uid).collection("batches")
                     val batchDocs = batchesRef.get().await()
@@ -1327,7 +1330,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     // 2. Delete other user-scoped collections under users/{uid}
-                    val collections = listOf("students", "attendance", "attendance_records")
+                    val collections = listOf("students", "attendance", "attendance_records", "schedule_slots", "slots", "courses")
                     for (collection in collections) {
                         try {
                             val ref = currentFirestore.collection("users").document(uid).collection(collection)
@@ -1357,39 +1360,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun initDemoProfileIfNeeded() {
         val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
-        val savedName = prefs.getString("profile_name", null)
-        if (!savedName.isNullOrBlank()) {
-            _userProfile.value = com.example.models.UserProfile(
-                name = savedName,
-                subject = prefs.getString("profile_subject", "Computer Science & Engineering") ?: "Computer Science & Engineering",
-                institute = prefs.getString("profile_institute", "Department of CSE") ?: "Department of CSE",
-                role = "teacher",
-                branchSectionYear = ""
-            )
-        } else {
-            // One-time creation of demo account profile
-            val defaultName = "Prof. Yash Thakur"
-            val defaultSubject = "Computer Science & Engineering"
-            val defaultInstitute = "Department of CSE"
-            prefs.edit()
-                .putString("profile_name", defaultName)
-                .putString("profile_subject", defaultSubject)
-                .putString("profile_institute", defaultInstitute)
-                .putString("profile_role", "teacher")
-                .putBoolean("has_profile", true)
-                .apply()
-            _userProfile.value = com.example.models.UserProfile(defaultName, defaultSubject, defaultInstitute, role = "teacher")
-        }
+        val defaultName = "Prof. Rajesh Sharma"
+        val defaultEmail = "prof.rajesh@campus.edu"
+        val defaultSubject = "Computer Science & Engineering"
+        val defaultInstitute = "Department of CSE"
+        prefs.edit()
+            .putString("profile_name", defaultName)
+            .putString("profile_email", defaultEmail)
+            .putString("profile_subject", defaultSubject)
+            .putString("profile_institute", defaultInstitute)
+            .putString("profile_role", "teacher")
+            .putBoolean("has_profile", true)
+            .apply()
+        _userProfile.value = com.example.models.UserProfile(defaultName, defaultSubject, defaultInstitute, role = "teacher")
     }
 
     fun initDemoStudentProfileIfNeeded() {
         val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
-        val defaultName = "Sakshi Sharma"
+        val defaultName = "Aman Kumar"
+        val defaultEmail = "student.demo@campus.edu"
         val defaultSubject = "Computer Science & Engineering"
         val defaultInstitute = "Department of CSE"
         val defaultBranch = "B.Tech CSE • 4th Sem • Sec A"
         prefs.edit()
             .putString("profile_name", defaultName)
+            .putString("profile_email", defaultEmail)
             .putString("profile_subject", defaultSubject)
             .putString("profile_institute", defaultInstitute)
             .putString("profile_role", "student")
@@ -1442,6 +1437,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (slots.isEmpty()) {
                     loadDummyDataSuspend()
                 }
+                populateDemoOfficialClassesIfEmpty()
 
                 try {
                     auth?.signInAnonymously()?.await()
@@ -1754,7 +1750,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         id = sId,
                         name = s.name ?: "Unknown",
                         rollNumber = s.rollNumber ?: "",
-                        courseId = courseId
+                        courseId = courseId,
+                        email = s.email ?: ""
                     )
                 }
                 repository.dao.insertStudents(studentEntities)
@@ -1798,7 +1795,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             writeBatch.set(doc, hashMapOf(
                                 "id" to sId,
                                 "name" to (student.name ?: "Unknown"),
-                                "rollNumber" to (student.rollNumber ?: "")
+                                "rollNumber" to (student.rollNumber ?: ""),
+                                "email" to (student.email ?: "")
                             ))
                         }
                         try {
@@ -1927,6 +1925,105 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun searchStudents(courseId: String, query: String) = repository.searchStudents(courseId, query)
     fun getAttendanceCountForCourse(courseId: String) = repository.getAttendanceCountForCourse(courseId)
     fun getDistinctAttendanceDatesForCourse(courseId: String) = repository.getDistinctAttendanceDatesForCourse(courseId)
+
+    fun cancelClassSession(
+        date: String,
+        slotId: String,
+        courseId: String,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val uid = currentActiveUserId
+                val students = repository.getStudentsByCourseSync(courseId)
+                if (students.isEmpty()) {
+                    val record = AttendanceRecordEntity(
+                        date = date,
+                        scheduleSlotId = slotId,
+                        studentId = "CANCELLED_SESSION",
+                        status = "CANCELLED",
+                        courseId = courseId,
+                        userId = uid,
+                        markedAt = System.currentTimeMillis()
+                    )
+                    repository.saveAttendance(record)
+                } else {
+                    students.forEach { student ->
+                        val record = AttendanceRecordEntity(
+                            date = date,
+                            scheduleSlotId = slotId,
+                            studentId = student.id,
+                            status = "CANCELLED",
+                            courseId = courseId,
+                            userId = uid,
+                            markedAt = System.currentTimeMillis()
+                        )
+                        repository.saveAttendance(record)
+                    }
+                }
+
+                // Also record for self so student side views it as cancelled immediately
+                val selfRecord = AttendanceRecordEntity(
+                    date = date,
+                    scheduleSlotId = slotId,
+                    studentId = "self",
+                    status = "CANCELLED",
+                    courseId = courseId,
+                    userId = uid,
+                    markedAt = System.currentTimeMillis()
+                )
+                repository.saveAttendance(selfRecord)
+
+                val authUid = auth?.currentUser?.uid
+                val db = firestore
+                if (authUid != null && db != null && courseId.isNotBlank()) {
+                    try {
+                        val sessionDoc = db.collection("users").document(authUid)
+                            .collection("batches").document(courseId)
+                            .collection("cancelled_sessions").document("${date}_${slotId}")
+                        sessionDoc.set(hashMapOf(
+                            "date" to date,
+                            "scheduleSlotId" to slotId,
+                            "courseId" to courseId,
+                            "status" to "CANCELLED",
+                            "cancelledAt" to System.currentTimeMillis()
+                        ))
+                    } catch (e: Exception) {
+                        Log.w("AttendanceSync", "Failed to sync cancelled session: ${e.message}")
+                    }
+                }
+                triggerCelebration("Class marked as Cancelled ✓")
+                onSuccess()
+            } catch (e: Exception) {
+                Log.e("CancelClass", "Error cancelling class", e)
+                onError(e.message ?: "Failed to cancel class")
+            }
+        }
+    }
+
+    fun uncancelClassSession(
+        date: String,
+        slotId: String,
+        courseId: String,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val students = repository.getStudentsByCourseSync(courseId)
+                students.forEach { st ->
+                    repository.deleteAttendance(date, slotId, st.id)
+                }
+                repository.deleteAttendance(date, slotId, "CANCELLED_SESSION")
+                repository.deleteAttendance(date, slotId, "self")
+                triggerCelebration("Cancelled status cleared")
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to clear cancelled status")
+            }
+        }
+    }
 
     fun exportAttendanceData(
         context: Context,
@@ -2469,6 +2566,187 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     onSuccess(null)
                 }
             }
+        }
+    }
+
+    // ==========================================
+    // OFFICIAL TIMETABLE & ATTENDANCE FEED (STUDENT ERP)
+    // ==========================================
+    val activeOfficialClasses: StateFlow<List<com.example.data.OfficialClassEntity>> =
+        repository.getActiveOfficialClasses()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val hiddenOfficialClasses: StateFlow<List<com.example.data.OfficialClassEntity>> =
+        repository.getHiddenOfficialClasses()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val officialAttendance: StateFlow<List<com.example.data.OfficialAttendanceEntity>> =
+        repository.getAllOfficialAttendance()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun getStudentEmail(): String {
+        val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+        val saved = prefs.getString("profile_email", null)
+        if (!saved.isNullOrBlank()) return saved.trim().lowercase()
+        val authEmail = auth?.currentUser?.email
+        if (!authEmail.isNullOrBlank()) return authEmail.trim().lowercase()
+        return if (_isFaculty.value) "prof.rajesh@campus.edu" else "student.demo@campus.edu"
+    }
+
+    fun hideOfficialClass(slotId: String) {
+        viewModelScope.launch {
+            repository.setOfficialClassHidden(slotId, true)
+            triggerCelebration("Class moved to Hidden Classes ✓")
+        }
+    }
+
+    fun unhideOfficialClass(slotId: String) {
+        viewModelScope.launch {
+            repository.setOfficialClassHidden(slotId, false)
+            triggerCelebration("Class restored to Schedule ✓")
+        }
+    }
+
+    fun syncOfficialStudentFeed() {
+        viewModelScope.launch {
+            val email = getStudentEmail()
+            val db = firestore
+            if (db != null && email.isNotBlank()) {
+                try {
+                    val classesSnap = db.collection("student_feed").document(email)
+                        .collection("official_classes").get().await()
+                    if (!classesSnap.isEmpty) {
+                        val officialList = classesSnap.documents.mapNotNull { doc ->
+                            val slotId = doc.getString("slotId") ?: doc.id
+                            val courseId = doc.getString("courseId") ?: ""
+                            val courseName = doc.getString("courseName") ?: "Subject"
+                            val courseCode = doc.getString("courseCode") ?: ""
+                            val dayOfWeek = doc.getString("dayOfWeek") ?: "Wednesday"
+                            val startTime = doc.getString("startTime") ?: "02:00 PM"
+                            val endTime = doc.getString("endTime") ?: "03:00 PM"
+                            val room = doc.getString("room") ?: "Room 204"
+                            val section = doc.getString("section") ?: ""
+                            val facultyName = doc.getString("facultyName") ?: "Faculty Instructor"
+                            val facultyEmail = doc.getString("facultyEmail") ?: ""
+                            com.example.data.OfficialClassEntity(
+                                slotId = slotId,
+                                courseId = courseId,
+                                courseName = courseName,
+                                courseCode = courseCode,
+                                dayOfWeek = dayOfWeek,
+                                startTime = startTime,
+                                endTime = endTime,
+                                room = room,
+                                section = section,
+                                facultyName = facultyName,
+                                facultyEmail = facultyEmail
+                            )
+                        }
+                        repository.insertOfficialClasses(officialList)
+                    }
+
+                    val attSnap = db.collection("student_feed").document(email)
+                        .collection("attendance").get().await()
+                    if (!attSnap.isEmpty) {
+                        val attList = attSnap.documents.mapNotNull { doc ->
+                            val id = doc.getString("id") ?: doc.id
+                            val date = doc.getString("date") ?: ""
+                            val slotId = doc.getString("slotId") ?: ""
+                            val courseId = doc.getString("courseId") ?: ""
+                            val courseName = doc.getString("courseName") ?: ""
+                            val status = doc.getString("status") ?: "P"
+                            val markedAt = doc.getLong("markedAt") ?: System.currentTimeMillis()
+                            com.example.data.OfficialAttendanceEntity(
+                                id = id,
+                                date = date,
+                                slotId = slotId,
+                                courseId = courseId,
+                                courseName = courseName,
+                                status = status,
+                                markedAt = markedAt
+                            )
+                        }
+                        repository.insertOfficialAttendance(attList)
+                    }
+                } catch (e: Exception) {
+                    Log.d("OfficialFeed", "Could not sync cloud feed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    suspend fun populateDemoOfficialClassesIfEmpty() {
+        val currentOfficial = repository.getActiveOfficialClasses().firstOrNull() ?: emptyList()
+        if (currentOfficial.isEmpty()) {
+            val demoClasses = listOf(
+                com.example.data.OfficialClassEntity(
+                    slotId = "official_cs201_wed_2pm",
+                    courseId = "batch_cs201",
+                    courseName = "Data Structures & Algorithms",
+                    courseCode = "CS201",
+                    dayOfWeek = "Wednesday",
+                    startTime = "02:00 PM",
+                    endTime = "03:00 PM",
+                    room = "Room 204",
+                    section = "Section A",
+                    facultyName = "Prof. Rajesh Sharma",
+                    facultyEmail = "prof.rajesh@campus.edu"
+                ),
+                com.example.data.OfficialClassEntity(
+                    slotId = "official_cs202_wed_330pm",
+                    courseId = "batch_cs202",
+                    courseName = "Database Management Systems",
+                    courseCode = "CS202",
+                    dayOfWeek = "Wednesday",
+                    startTime = "03:30 PM",
+                    endTime = "04:30 PM",
+                    room = "Room 108",
+                    section = "Section A",
+                    facultyName = "Prof. Rajesh Sharma",
+                    facultyEmail = "prof.rajesh@campus.edu"
+                ),
+                com.example.data.OfficialClassEntity(
+                    slotId = "official_cs201_fri_10am",
+                    courseId = "batch_cs201",
+                    courseName = "Data Structures & Algorithms",
+                    courseCode = "CS201",
+                    dayOfWeek = "Friday",
+                    startTime = "10:00 AM",
+                    endTime = "11:00 AM",
+                    room = "Room 204",
+                    section = "Section A",
+                    facultyName = "Prof. Rajesh Sharma",
+                    facultyEmail = "prof.rajesh@campus.edu"
+                ),
+                com.example.data.OfficialClassEntity(
+                    slotId = "official_cs202_mon_11am",
+                    courseId = "batch_cs202",
+                    courseName = "Database Management Systems",
+                    courseCode = "CS202",
+                    dayOfWeek = "Monday",
+                    startTime = "11:00 AM",
+                    endTime = "12:00 PM",
+                    room = "Room 108",
+                    section = "Section A",
+                    facultyName = "Prof. Rajesh Sharma",
+                    facultyEmail = "prof.rajesh@campus.edu"
+                )
+            )
+            repository.insertOfficialClasses(demoClasses)
+
+            val todayStr = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE)
+            val demoAttendance = listOf(
+                com.example.data.OfficialAttendanceEntity(
+                    id = "${todayStr}_official_cs201_wed_2pm",
+                    date = todayStr,
+                    slotId = "official_cs201_wed_2pm",
+                    courseId = "batch_cs201",
+                    courseName = "Data Structures & Algorithms",
+                    status = "P",
+                    markedAt = System.currentTimeMillis()
+                )
+            )
+            repository.insertOfficialAttendance(demoAttendance)
         }
     }
 }

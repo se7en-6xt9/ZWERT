@@ -46,5 +46,6 @@ data class ScheduleImport(
 data class StudentImport(
     val id: String? = null,
     val name: String? = null,
-    val rollNumber: String? = null
+    val rollNumber: String? = null,
+    val email: String? = null
 )

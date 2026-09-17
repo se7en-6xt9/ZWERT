@@ -632,6 +632,49 @@ fun LoginScreen(
                                         )
                                     }
                                 }
+
+                                Spacer(modifier = Modifier.height(14.dp))
+
+                                // Quick Demo Login for selected role
+                                OutlinedButton(
+                                    onClick = {
+                                        isSubmitting = true
+                                        if (selectedRole == "student") {
+                                            viewModel.loginAsDemoStudent {
+                                                isSubmitting = false
+                                                navController.navigate("student_dashboard") {
+                                                    popUpTo("login") { inclusive = true }
+                                                }
+                                            }
+                                        } else {
+                                            viewModel.loginAsDemoFaculty {
+                                                isSubmitting = false
+                                                navController.navigate("faculty_dashboard") {
+                                                    popUpTo("login") { inclusive = true }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp),
+                                    shape = RoundedCornerShape(14.dp),
+                                    border = BorderStroke(1.5.dp, if (selectedRole == "student") accentMint else primaryIndigo),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = if (selectedRole == "student") accentMint else primaryIndigo
+                                    ),
+                                    enabled = !isSubmitting
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("⚡", fontSize = 16.sp)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = if (selectedRole == "student") "Try Demo Student Account" else "Try Demo Faculty Account",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp
+                                        )
+                                    }
+                                }
                             }
                         } else {
                             // CREATE ACCOUNT FORM (ROLE-SPECIFIC FIELDS)
@@ -1088,6 +1131,190 @@ fun LoginScreen(
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 5. ONE-TAP DEMO ACCOUNTS SECTION (INSTANT TESTING MODE)
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp),
+                shape = RoundedCornerShape(22.dp),
+                color = Color.White.copy(alpha = 0.95f),
+                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                shadowElevation = 4.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFFFEF3C7)
+                            ) {
+                                Text(
+                                    "⚡ DEMO",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = Color(0xFFD97706),
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "1-Click Demo Accounts",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1E1B4B)
+                            )
+                        }
+                        Text(
+                            text = "No password needed",
+                            fontSize = 11.sp,
+                            color = Color(0xFF64748B),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Instant login to test student and faculty dashboards with pre-configured schedules, attendance, and batches.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF64748B)
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Demo Student Card
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !isSubmitting) {
+                                isSubmitting = true
+                                viewModel.loginAsDemoStudent {
+                                    isSubmitting = false
+                                    navController.navigate("student_dashboard") {
+                                        popUpTo("login") { inclusive = true }
+                                    }
+                                }
+                            },
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color(0xFFF0FDF4),
+                        border = BorderStroke(1.dp, accentMint.copy(alpha = 0.4f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = accentMint.copy(alpha = 0.15f),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("🎓", fontSize = 20.sp)
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Aman Kumar (Student)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF065F46)
+                                )
+                                Text(
+                                    "student.demo@campus.edu • 4th Sem Sec A",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF047857)
+                                )
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = accentMint
+                            ) {
+                                Text(
+                                    "Login",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Demo Faculty Card
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !isSubmitting) {
+                                isSubmitting = true
+                                viewModel.loginAsDemoFaculty {
+                                    isSubmitting = false
+                                    navController.navigate("faculty_dashboard") {
+                                        popUpTo("login") { inclusive = true }
+                                    }
+                                }
+                            },
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color(0xFFEEF2FF),
+                        border = BorderStroke(1.dp, primaryIndigo.copy(alpha = 0.4f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = primaryIndigo.copy(alpha = 0.15f),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("👨‍🏫", fontSize = 20.sp)
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Prof. Rajesh Sharma (Faculty)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF312E81)
+                                )
+                                Text(
+                                    "prof.rajesh@campus.edu • Dept of CSE",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF4338CA)
+                                )
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = primaryIndigo
+                            ) {
+                                Text(
+                                    "Login",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
                             }
                         }
                     }

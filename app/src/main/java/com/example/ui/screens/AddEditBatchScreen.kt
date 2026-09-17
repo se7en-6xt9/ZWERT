@@ -708,45 +708,67 @@ fun AddEditBatchScreen(
                                 AnimatedVisibility(visible = !isBulkAddMode) {
                                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                         students.forEachIndexed { index, student ->
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                                verticalAlignment = Alignment.CenterVertically
+                                            Surface(
+                                                shape = RoundedCornerShape(14.dp),
+                                                color = colorScheme.background,
+                                                border = BorderStroke(1.dp, colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                                                modifier = Modifier.fillMaxWidth()
                                             ) {
-                                                AnimatedTextField(
-                                                    value = student.name ?: "",
-                                                    onValueChange = {
-                                                        val newStudents = students.toMutableList()
-                                                        newStudents[index] = student.copy(name = it)
-                                                        students = newStudents
-                                                    },
-                                                    label = "Name",
-                                                    modifier = Modifier.weight(1.5f),
-                                                    baseColor = colorScheme.background,
-                                                    accentColor = accentColor,
-                                                    haptic = haptic
-                                                )
-                                                AnimatedTextField(
-                                                    value = student.rollNumber ?: "",
-                                                    onValueChange = {
-                                                        val newStudents = students.toMutableList()
-                                                        newStudents[index] = student.copy(rollNumber = it)
-                                                        students = newStudents
-                                                    },
-                                                    label = "Roll No",
-                                                    modifier = Modifier.weight(1f),
-                                                    baseColor = colorScheme.background,
-                                                    accentColor = accentColor,
-                                                    haptic = haptic
-                                                )
-                                                IconButton(
-                                                    onClick = {
-                                                        val newStudents = students.toMutableList()
-                                                        newStudents.removeAt(index)
-                                                        students = newStudents
+                                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        AnimatedTextField(
+                                                            value = student.name ?: "",
+                                                            onValueChange = {
+                                                                val newStudents = students.toMutableList()
+                                                                newStudents[index] = student.copy(name = it)
+                                                                students = newStudents
+                                                            },
+                                                            label = "Name",
+                                                            modifier = Modifier.weight(1.5f),
+                                                            baseColor = colorScheme.surface,
+                                                            accentColor = accentColor,
+                                                            haptic = haptic
+                                                        )
+                                                        AnimatedTextField(
+                                                            value = student.rollNumber ?: "",
+                                                            onValueChange = {
+                                                                val newStudents = students.toMutableList()
+                                                                newStudents[index] = student.copy(rollNumber = it)
+                                                                students = newStudents
+                                                            },
+                                                            label = "Roll No",
+                                                            modifier = Modifier.weight(1f),
+                                                            baseColor = colorScheme.surface,
+                                                            accentColor = accentColor,
+                                                            haptic = haptic
+                                                        )
+                                                        IconButton(
+                                                            onClick = {
+                                                                val newStudents = students.toMutableList()
+                                                                newStudents.removeAt(index)
+                                                                students = newStudents
+                                                            }
+                                                        ) {
+                                                            Icon(Icons.Default.Delete, "Remove", tint = colorScheme.error)
+                                                        }
                                                     }
-                                                ) {
-                                                    Icon(Icons.Default.Delete, "Remove", tint = colorScheme.error)
+                                                    AnimatedTextField(
+                                                        value = student.email ?: "",
+                                                        onValueChange = {
+                                                            val newStudents = students.toMutableList()
+                                                            newStudents[index] = student.copy(email = it)
+                                                            students = newStudents
+                                                        },
+                                                        label = "Student Email (Optional - for Live ERP Sync)",
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        baseColor = colorScheme.surface,
+                                                        accentColor = accentColor,
+                                                        haptic = haptic
+                                                    )
                                                 }
                                             }
                                         }

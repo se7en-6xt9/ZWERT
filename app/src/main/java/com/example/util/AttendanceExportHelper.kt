@@ -5,7 +5,6 @@ import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
@@ -42,7 +41,9 @@ data class StudentExportRow(
     val present: Int,
     val absent: Int,
     val late: Int,
+    val cancelled: Int,
     val attended: Int,
+    val totalHeld: Int,
     val percentage: Double,
     val status: String,
     val remarks: String
@@ -79,11 +80,10 @@ object AttendanceExportHelper {
             }
         }
 
-        // If no records exist in the range, populate at least with valid dates in the range
+        // If no records exist in the range, populate at least with active dates or range
         val activeDates = if (dateSet.isNotEmpty()) {
             dateSet.sorted()
         } else {
-            // Generate sequence of dates
             val list = mutableListOf<String>()
             var curr = options.startDate
             while (!curr.isAfter(options.endDate) && list.size <= 31) {
@@ -95,16 +95,21 @@ object AttendanceExportHelper {
 
         // Fast lookup map: date -> studentId -> status
         val lookup = mutableMapOf<String, MutableMap<String, String>>()
+        val cancelledDates = mutableSetOf<String>()
+
         attendanceRecords.forEach { record ->
             val dateMap = lookup.getOrPut(record.date) { mutableMapOf() }
             dateMap[record.studentId] = record.status
+            if (record.studentId == "CANCELLED_SESSION" || record.status.equals("CANCELLED", ignoreCase = true)) {
+                cancelledDates.add(record.date)
+            }
         }
 
         return try {
             when (options.format) {
-                ExportFormat.EXCEL -> generateCsvExcel(file, course, students, activeDates, lookup, options)
-                ExportFormat.WORD -> generateWordDoc(file, course, students, activeDates, lookup, options)
-                ExportFormat.PDF -> generatePdf(file, course, students, activeDates, lookup, options)
+                ExportFormat.EXCEL -> generateCsvExcel(file, course, students, activeDates, lookup, cancelledDates, options)
+                ExportFormat.WORD -> generateWordDoc(file, course, students, activeDates, lookup, cancelledDates, options)
+                ExportFormat.PDF -> generatePdf(file, course, students, activeDates, lookup, cancelledDates, options)
             }
             file
         } catch (e: Exception) {
@@ -153,7 +158,6 @@ object AttendanceExportHelper {
 
             context.startActivity(Intent.createChooser(viewIntent, "Open with"))
         } catch (e: Exception) {
-            // Fallback to share if no dedicated viewer installed
             shareExportedFile(context, file, format)
         }
     }
@@ -167,14 +171,15 @@ object AttendanceExportHelper {
         students: List<StudentEntity>,
         dates: List<String>,
         lookup: Map<String, Map<String, String>>,
+        cancelledDates: Set<String>,
         options: ExportOptions
     ) {
-        val totalClasses = dates.size
-
-        // Precompute statistics
+        // Classes held = total active dates minus entirely cancelled dates
+        val totalSessions = dates.size
         var grandTotalPresent = 0
         var grandTotalAbsent = 0
         var grandTotalLate = 0
+        var grandTotalCancelled = 0
         var eligibleCount = 0
         var shortageCount = 0
 
@@ -182,21 +187,28 @@ object AttendanceExportHelper {
             var p = 0
             var a = 0
             var l = 0
+            var c = 0
             dates.forEach { d ->
-                val status = lookup[d]?.get(student.id)?.uppercase() ?: "-"
+                val isDateCancelled = cancelledDates.contains(d)
+                val status = lookup[d]?.get(student.id)?.uppercase() ?: if (isDateCancelled) "CANCELLED" else "-"
                 when (status) {
                     "P", "PRESENT" -> p++
                     "L", "LATE" -> l++
                     "A", "ABSENT" -> a++
+                    "C", "CANCELLED" -> c++
                 }
             }
+
+            // Total held for this student excludes cancelled sessions
+            val totalHeld = (dates.size - c).coerceAtLeast(0)
             val attended = p + l
-            val pct = if (totalClasses > 0) (attended * 100.0 / totalClasses) else 0.0
+            val pct = if (totalHeld > 0) (attended * 100.0 / totalHeld) else 0.0
             if (pct >= 75.0) eligibleCount++ else shortageCount++
 
             grandTotalPresent += p
             grandTotalAbsent += a
             grandTotalLate += l
+            grandTotalCancelled += c
 
             val statusStr = when {
                 pct >= 75.0 -> "ELIGIBLE (>=75%)"
@@ -211,55 +223,53 @@ object AttendanceExportHelper {
                 else -> "Detention Alert"
             }
 
-            StudentExportRow(student, p, a, l, attended, pct, statusStr, remarksStr)
+            StudentExportRow(student, p, a, l, c, attended, totalHeld, pct, statusStr, remarksStr)
         }
 
-        val totalPossibleSlots = students.size * totalClasses
+        val totalPossibleSlots = studentStats.sumOf { it.totalHeld }
         val totalAttendedGrand = grandTotalPresent + grandTotalLate
         val classAvgPct = if (totalPossibleSlots > 0) (totalAttendedGrand * 100.0 / totalPossibleSlots) else 0.0
 
         FileOutputStream(file).use { fos ->
-            // Write UTF-8 BOM so Excel immediately opens it with proper UTF-8 decoding
+            // Write UTF-8 BOM for seamless Microsoft Excel & Google Sheets character decoding
             fos.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
             OutputStreamWriter(fos, StandardCharsets.UTF_8).use { writer ->
-                // Row 1: Document Title
-                writer.append("\"ACADEMIC ATTENDANCE REGISTER - OFFICIAL RECORD\",,,,,,,,,,\n")
-                
-                // Rows 2-6: Structured Institutional Header Grid
-                writer.append("\"Institution:\",\"${escapeCsv(options.institutionName)}\",,\"Academic Session:\",\"${LocalDate.now().year}-${LocalDate.now().year + 1}\",,,,\n")
-                writer.append("\"Course Title:\",\"${escapeCsv(course?.name ?: "Course")}\",,\"Course Code:\",\"${escapeCsv(course?.code ?: "N/A")}\",,,,\n")
-                writer.append("\"Faculty In-Charge:\",\"${escapeCsv(options.facultyName)}\",,\"Semester / Section:\",\"${escapeCsv(course?.semester ?: "Semester")} / ${escapeCsv(course?.section ?: "Batch")}\",,,,\n")
-                writer.append("\"Duration Range:\",\"${options.startDate} to ${options.endDate}\",,\"Total Lectures Held:\",\"$totalClasses\",,,,\n")
-                writer.append("\"Report Generated:\",\"${LocalDate.now()}\",,\"Enrolled Students:\",\"${students.size}\",,,,\n")
-                writer.append(",,,,,,,,,,\n")
-
-                // Rows 8-10: Executive Summary & Stat Highlights
-                writer.append("\"EXECUTIVE ATTENDANCE SUMMARY\",,,,,,,,,,\n")
-                writer.append("\"Statutory Benchmark:\",\"75.0% Minimum for Exam Eligibility\",,\"Class Average Attendance:\",\"${String.format(Locale.ENGLISH, "%.1f%%", classAvgPct)}\",,,,\n")
-                writer.append("\"Eligible Students (>= 75%):\",\"$eligibleCount / ${students.size}\",,\"Attendance Defaulters (< 75%):\",\"$shortageCount / ${students.size}\",,,,\n")
-                writer.append(",,,,,,,,,,\n")
+                // Institution and Document Title
+                writer.append("\"ACADEMIC ATTENDANCE REGISTER - OFFICIAL RECORD\"\n")
+                writer.append("\"Institution:\",\"${escapeCsv(options.institutionName)}\"\n")
+                writer.append("\"Academic Session:\",\"${LocalDate.now().year}-${LocalDate.now().year + 1}\",\"Report Date:\",\"${LocalDate.now()}\"\n")
+                writer.append("\"Course Title:\",\"${escapeCsv(course?.name ?: "Course")}\",\"Course Code:\",\"${escapeCsv(course?.code ?: "N/A")}\"\n")
+                writer.append("\"Faculty In-Charge:\",\"${escapeCsv(options.facultyName)}\",\"Semester / Batch:\",\"${escapeCsv(course?.semester ?: "Sem")} / ${escapeCsv(course?.section ?: "Batch")}\"\n")
+                writer.append("\"Duration Range:\",\"${options.startDate} to ${options.endDate}\",\"Total Sessions:\",\"$totalSessions\"\n")
+                writer.append("\"Enrolled Students:\",\"${students.size}\",\"Class Average Attendance:\",\"${String.format(Locale.ENGLISH, "%.1f%%", classAvgPct)}\"\n")
+                writer.append("\"Exam Eligible (>=75%):\",\"$eligibleCount / ${students.size}\",\"Attendance Shortage (<75%):\",\"$shortageCount / ${students.size}\"\n")
+                writer.append("\n")
 
                 // Main Table Column Headers
                 writer.append("\"S.No.\",\"Roll Number\",\"Student Name\"")
                 dates.forEach { date ->
-                    writer.append(",\"${formatShortDate(date)}\"")
+                    val isCancelled = cancelledDates.contains(date)
+                    val label = formatShortDate(date) + if (isCancelled) " (C)" else ""
+                    writer.append(",\"$label\"")
                 }
-                writer.append(",\"Total Held\",\"Present (P)\",\"Absent (A)\",\"Leave/OD (L)\",\"Attendance %\",\"Eligibility Status\",\"Remarks\"\n")
+                writer.append(",\"Held\",\"Present (P)\",\"Absent (A)\",\"Late (L)\",\"Cancelled (C)\",\"Attended (P+L)\",\"Attendance %\",\"Eligibility Status\",\"Remarks\"\n")
 
                 // Main Student Rows
                 studentStats.forEachIndexed { index, row ->
                     writer.append("\"${index + 1}\",\"${escapeCsv(row.student.rollNumber)}\",\"${escapeCsv(row.student.name)}\"")
                     dates.forEach { date ->
-                        val raw = lookup[date]?.get(row.student.id)?.uppercase() ?: "-"
+                        val isCancelled = cancelledDates.contains(date)
+                        val raw = lookup[date]?.get(row.student.id)?.uppercase() ?: if (isCancelled) "CANCELLED" else "-"
                         val code = when (raw) {
                             "P", "PRESENT" -> "P"
                             "A", "ABSENT" -> "A"
                             "L", "LATE" -> "L"
+                            "C", "CANCELLED" -> "C"
                             else -> "-"
                         }
                         writer.append(",\"$code\"")
                     }
-                    writer.append(",\"$totalClasses\",\"${row.present}\",\"${row.absent}\",\"${row.late}\",\"${String.format(Locale.ENGLISH, "%.1f%%", row.percentage)}\",\"${row.status}\",\"${row.remarks}\"\n")
+                    writer.append(",\"${row.totalHeld}\",\"${row.present}\",\"${row.absent}\",\"${row.late}\",\"${row.cancelled}\",\"${row.attended}\",\"${String.format(Locale.ENGLISH, "%.1f%%", row.percentage)}\",\"${row.status}\",\"${row.remarks}\"\n")
                 }
 
                 // Table Bottom Aggregations: Day-wise totals
@@ -271,7 +281,7 @@ object AttendanceExportHelper {
                     }
                     writer.append(",\"$pOnDate\"")
                 }
-                writer.append(",\"$totalPossibleSlots\",\"$grandTotalPresent\",\"$grandTotalAbsent\",\"$grandTotalLate\",\"${String.format(Locale.ENGLISH, "%.1f%%", classAvgPct)}\",\"-\",\"-\"\n")
+                writer.append(",\"$totalPossibleSlots\",\"$grandTotalPresent\",\"$grandTotalAbsent\",\"$grandTotalLate\",\"$grandTotalCancelled\",\"$totalAttendedGrand\",\"${String.format(Locale.ENGLISH, "%.1f%%", classAvgPct)}\",\"-\",\"-\"\n")
 
                 writer.append("\"\",\"\",\"DAILY ABSENT (A)\"")
                 dates.forEach { date ->
@@ -281,28 +291,30 @@ object AttendanceExportHelper {
                     }
                     writer.append(",\"$aOnDate\"")
                 }
-                writer.append(",\"-\",\"-\",\"-\",\"-\",\"-\",\"-\",\"-\"\n")
+                writer.append(",\"-\",\"-\",\"-\",\"-\",\"-\",\"-\",\"-\",\"-\",\"-\"\n")
 
                 writer.append("\"\",\"\",\"DAILY ATTENDANCE RATE (%)\"")
                 dates.forEach { date ->
-                    val pOnDate = students.count { s ->
-                        val st = lookup[date]?.get(s.id)?.uppercase()
-                        st == "P" || st == "PRESENT" || st == "L" || st == "LATE"
+                    val isCancelled = cancelledDates.contains(date)
+                    if (isCancelled) {
+                        writer.append(",\"CANCELLED\"")
+                    } else {
+                        val pOnDate = students.count { s ->
+                            val st = lookup[date]?.get(s.id)?.uppercase()
+                            st == "P" || st == "PRESENT" || st == "L" || st == "LATE"
+                        }
+                        val dayRate = if (students.isNotEmpty()) (pOnDate * 100.0 / students.size) else 0.0
+                        writer.append(",\"${String.format(Locale.ENGLISH, "%.1f%%", dayRate)}\"")
                     }
-                    val dayRate = if (students.isNotEmpty()) (pOnDate * 100.0 / students.size) else 0.0
-                    writer.append(",\"${String.format(Locale.ENGLISH, "%.1f%%", dayRate)}\"")
                 }
-                writer.append(",\"-\",\"-\",\"-\",\"-\",\"-\",\"-\",\"-\"\n")
-
-                // Empty row before signatures
-                writer.append(",,,,,,,,,,\n")
-                writer.append(",,,,,,,,,,\n")
+                writer.append(",\"-\",\"-\",\"-\",\"-\",\"-\",\"-\",\"-\",\"-\",\"-\"\n")
 
                 // Official Endorsement Block
-                writer.append("\"OFFICIAL VERIFICATION & ENDORSEMENT\",,,,,,,,,,\n")
-                writer.append("\"Course Instructor / Faculty:\",\"${escapeCsv(options.facultyName)}\",,,,\"Head of Department (HOD):\",\"\"\n")
-                writer.append("\"Faculty Signature:\",\"____________________________\",,,,\"HOD Signature:\",\"____________________________\"\n")
-                writer.append("\"Date:\",\"${LocalDate.now()}\",,,,\"Official Seal / Stamp:\",\"[ SEAL ]\"\n")
+                writer.append("\n\n")
+                writer.append("\"OFFICIAL VERIFICATION & ENDORSEMENT\"\n")
+                writer.append("\"Course Instructor / Faculty:\",\"${escapeCsv(options.facultyName)}\",\"Head of Department:\",\"\"\n")
+                writer.append("\"Faculty Signature:\",\"____________________________\",\"HOD Signature:\",\"____________________________\"\n")
+                writer.append("\"Date:\",\"${LocalDate.now()}\",\"Official Seal:\",\"[ SEAL ]\"\n")
                 writer.flush()
             }
         }
@@ -317,12 +329,14 @@ object AttendanceExportHelper {
         students: List<StudentEntity>,
         dates: List<String>,
         lookup: Map<String, Map<String, String>>,
+        cancelledDates: Set<String>,
         options: ExportOptions
     ) {
-        val totalClasses = dates.size
+        val totalSessions = dates.size
         var grandTotalPresent = 0
         var grandTotalAbsent = 0
         var grandTotalLate = 0
+        var grandTotalCancelled = 0
         var eligibleCount = 0
         var shortageCount = 0
 
@@ -330,26 +344,32 @@ object AttendanceExportHelper {
             var p = 0
             var a = 0
             var l = 0
+            var c = 0
             dates.forEach { d ->
-                val status = lookup[d]?.get(s.id)?.uppercase() ?: "-"
+                val isDateCancelled = cancelledDates.contains(d)
+                val status = lookup[d]?.get(s.id)?.uppercase() ?: if (isDateCancelled) "CANCELLED" else "-"
                 when (status) {
                     "P", "PRESENT" -> p++
                     "L", "LATE" -> l++
                     "A", "ABSENT" -> a++
+                    "C", "CANCELLED" -> c++
                 }
             }
+
+            val totalHeld = (dates.size - c).coerceAtLeast(0)
             val attended = p + l
-            val pct = if (totalClasses > 0) (attended * 100.0 / totalClasses) else 0.0
+            val pct = if (totalHeld > 0) (attended * 100.0 / totalHeld) else 0.0
             if (pct >= 75.0) eligibleCount++ else shortageCount++
 
             grandTotalPresent += p
             grandTotalAbsent += a
             grandTotalLate += l
+            grandTotalCancelled += c
 
-            StudentExportRow(s, p, a, l, attended, pct, if (pct >= 75.0) "ELIGIBLE" else "SHORTAGE", "")
+            StudentExportRow(s, p, a, l, c, attended, totalHeld, pct, if (pct >= 75.0) "ELIGIBLE" else "SHORTAGE", "")
         }
 
-        val totalPossibleSlots = students.size * totalClasses
+        val totalPossibleSlots = studentStats.sumOf { it.totalHeld }
         val totalAttendedGrand = grandTotalPresent + grandTotalLate
         val classAvgPct = if (totalPossibleSlots > 0) (totalAttendedGrand * 100.0 / totalPossibleSlots) else 0.0
 
@@ -365,10 +385,6 @@ object AttendanceExportHelper {
                 .header-banner { border-bottom: 3px solid #1E3A8A; padding-bottom: 12px; margin-bottom: 16px; }
                 h1 { font-size: 17pt; color: #1E3A8A; margin: 0 0 4px 0; text-transform: uppercase; letter-spacing: 0.5px; }
                 h2 { font-size: 12pt; color: #475569; margin: 0; font-weight: 500; }
-                .kpi-grid { display: flex; width: 100%; margin-bottom: 16px; border-collapse: collapse; }
-                .kpi-box { padding: 8px 12px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; text-align: center; }
-                .kpi-label { font-size: 8.5pt; color: #64748B; text-transform: uppercase; font-weight: 600; margin-bottom: 2px; }
-                .kpi-val { font-size: 13pt; font-weight: bold; color: #0F172A; }
                 .meta-table { width: 100%; margin-bottom: 16px; border-collapse: collapse; background: #F8FAFC; border-radius: 6px; border: 1px solid #E2E8F0; }
                 .meta-table td { padding: 6px 10px; font-size: 9.5pt; }
                 .data-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 9pt; }
@@ -379,6 +395,7 @@ object AttendanceExportHelper {
                 .badge-p { background-color: #DCFCE7; color: #15803D; font-weight: bold; padding: 2px 5px; border-radius: 4px; font-size: 8.5pt; }
                 .badge-a { background-color: #FEE2E2; color: #B91C1C; font-weight: bold; padding: 2px 5px; border-radius: 4px; font-size: 8.5pt; }
                 .badge-l { background-color: #FEF3C7; color: #B45309; font-weight: bold; padding: 2px 5px; border-radius: 4px; font-size: 8.5pt; }
+                .badge-c { background-color: #F1F5F9; color: #475569; font-weight: bold; padding: 2px 5px; border-radius: 4px; font-size: 8.5pt; }
                 .badge-eligible { background-color: #DCFCE7; color: #166534; font-weight: bold; padding: 3px 6px; border-radius: 4px; font-size: 8pt; display: inline-block; }
                 .badge-shortage { background-color: #FEE2E2; color: #991B1B; font-weight: bold; padding: 3px 6px; border-radius: 4px; font-size: 8pt; display: inline-block; }
                 .summary-row { background-color: #E2E8F0; font-weight: bold; }
@@ -403,7 +420,7 @@ object AttendanceExportHelper {
                         <td><b>Semester / Section:</b> ${escapeCsv(course?.semester ?: "Sem")} ${escapeCsv(course?.section ?: "Section")}</td>
                     </tr>
                     <tr>
-                        <td><b>Total Lectures Conducted:</b> ${totalClasses}</td>
+                        <td><b>Total Sessions:</b> $totalSessions</td>
                         <td><b>Class Attendance Average:</b> <b>${String.format(Locale.ENGLISH, "%.1f%%", classAvgPct)}</b></td>
                     </tr>
                     <tr>
@@ -421,9 +438,11 @@ object AttendanceExportHelper {
         """.trimIndent())
 
         dates.forEach { d ->
-            sb.append("<th style='min-width:32px'>${formatShortDate(d)}</th>")
+            val isCancelled = cancelledDates.contains(d)
+            val tag = if (isCancelled) " (C)" else ""
+            sb.append("<th style='min-width:32px'>${formatShortDate(d)}$tag</th>")
         }
-        sb.append("<th style='width:32px'>Held</th><th style='width:28px'>P</th><th style='width:28px'>A</th><th style='width:28px'>L</th><th style='width:45px'>%</th><th style='width:75px'>Status</th></tr></thead><tbody>")
+        sb.append("<th style='width:32px'>Held</th><th style='width:28px'>P</th><th style='width:28px'>A</th><th style='width:28px'>L</th><th style='width:28px'>C</th><th style='width:45px'>%</th><th style='width:75px'>Status</th></tr></thead><tbody>")
 
         studentStats.forEachIndexed { idx, row ->
             sb.append("<tr>")
@@ -432,19 +451,22 @@ object AttendanceExportHelper {
             sb.append("<td class='left'>${escapeCsv(row.student.name)}</td>")
 
             dates.forEach { d ->
-                val status = lookup[d]?.get(row.student.id)?.uppercase() ?: "-"
+                val isCancelled = cancelledDates.contains(d)
+                val status = lookup[d]?.get(row.student.id)?.uppercase() ?: if (isCancelled) "CANCELLED" else "-"
                 when (status) {
                     "P", "PRESENT" -> sb.append("<td><span class='badge-p'>P</span></td>")
                     "A", "ABSENT" -> sb.append("<td><span class='badge-a'>A</span></td>")
                     "L", "LATE" -> sb.append("<td><span class='badge-l'>L</span></td>")
+                    "C", "CANCELLED" -> sb.append("<td><span class='badge-c'>C</span></td>")
                     else -> sb.append("<td style='color:#94A3B8'>-</td>")
                 }
             }
 
-            sb.append("<td>$totalClasses</td>")
+            sb.append("<td>${row.totalHeld}</td>")
             sb.append("<td style='font-weight:600; color:#15803D'>${row.present}</td>")
             sb.append("<td style='font-weight:600; color:#B91C1C'>${row.absent}</td>")
             sb.append("<td style='font-weight:600; color:#B45309'>${row.late}</td>")
+            sb.append("<td style='font-weight:600; color:#475569'>${row.cancelled}</td>")
 
             val pctColor = if (row.percentage >= 75.0) "#15803D" else if (row.percentage >= 65.0) "#D97706" else "#B91C1C"
             sb.append("<td style='color:$pctColor; font-weight:bold'>${String.format(Locale.ENGLISH, "%.1f%%", row.percentage)}</td>")
@@ -466,7 +488,7 @@ object AttendanceExportHelper {
             }
             sb.append("<td><b>$pCount</b></td>")
         }
-        sb.append("<td>$totalPossibleSlots</td><td>$grandTotalPresent</td><td>$grandTotalAbsent</td><td>$grandTotalLate</td><td>${String.format(Locale.ENGLISH, "%.1f%%", classAvgPct)}</td><td>-</td></tr>")
+        sb.append("<td>$totalPossibleSlots</td><td>$grandTotalPresent</td><td>$grandTotalAbsent</td><td>$grandTotalLate</td><td>$grandTotalCancelled</td><td>${String.format(Locale.ENGLISH, "%.1f%%", classAvgPct)}</td><td>-</td></tr>")
 
         sb.append("""
                     </tbody>
@@ -514,6 +536,7 @@ object AttendanceExportHelper {
         students: List<StudentEntity>,
         dates: List<String>,
         lookup: Map<String, Map<String, String>>,
+        cancelledDates: Set<String>,
         options: ExportOptions
     ) {
         val pdfDoc = PdfDocument()
@@ -592,6 +615,14 @@ object AttendanceExportHelper {
             textAlign = Paint.Align.CENTER
         }
 
+        val cancelledPaint = Paint().apply {
+            color = Color.rgb(100, 116, 139) // Slate Gray
+            textSize = 8f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            isAntiAlias = true
+            textAlign = Paint.Align.CENTER
+        }
+
         val dashPaint = Paint().apply {
             color = Color.rgb(148, 163, 184)
             textSize = 8f
@@ -614,11 +645,12 @@ object AttendanceExportHelper {
         val colSNoWidth = 24f
         val colRollWidth = 58f
         val colNameWidth = 100f
-        val colPWidth = 22f
-        val colAWidth = 22f
+        val colPWidth = 20f
+        val colAWidth = 20f
+        val colCWidth = 20f
         val colPctWidth = 32f
 
-        val fixedWidths = colSNoWidth + colRollWidth + colNameWidth + colPWidth + colAWidth + colPctWidth
+        val fixedWidths = colSNoWidth + colRollWidth + colNameWidth + colPWidth + colAWidth + colCWidth + colPctWidth
         val remainingWidth = printableWidth - fixedWidths
 
         // Max dates that fit across the page without crowding
@@ -692,6 +724,9 @@ object AttendanceExportHelper {
             canvas.drawText("A", colX + (colAWidth / 2f), headerTop + 13f, headerTextPaint)
             colX += colAWidth
 
+            canvas.drawText("C", colX + (colCWidth / 2f), headerTop + 13f, headerTextPaint)
+            colX += colCWidth
+
             canvas.drawText("%", colX + (colPctWidth / 2f), headerTop + 13f, headerTextPaint)
 
             currentY = headerBottom
@@ -705,12 +740,10 @@ object AttendanceExportHelper {
                 val rowTop = currentY
                 val rowBottom = currentY + rowHeight
 
-                // Alternate row background
                 if (i % 2 == 1) {
                     canvas.drawRect(marginLeft, rowTop, marginLeft + printableWidth, rowBottom, zebraBgPaint)
                 }
 
-                // Row border
                 canvas.drawRect(marginLeft, rowTop, marginLeft + printableWidth, rowBottom, borderPaint)
 
                 var cellX = marginLeft
@@ -734,9 +767,11 @@ object AttendanceExportHelper {
                 // Attendance Marks
                 var pCount = 0
                 var aCount = 0
+                var cCount = 0
 
                 visibleDates.forEach { date ->
-                    val status = lookup[date]?.get(student.id) ?: "-"
+                    val isCancelled = cancelledDates.contains(date)
+                    val status = lookup[date]?.get(student.id) ?: if (isCancelled) "CANCELLED" else "-"
                     when (status.uppercase()) {
                         "P", "PRESENT" -> {
                             pCount++
@@ -749,6 +784,10 @@ object AttendanceExportHelper {
                         "L", "LATE" -> {
                             pCount++
                             canvas.drawText("L", cellX + (colDateWidth / 2f), rowTop + 11.5f, latePaint)
+                        }
+                        "C", "CANCELLED" -> {
+                            cCount++
+                            canvas.drawText("C", cellX + (colDateWidth / 2f), rowTop + 11.5f, cancelledPaint)
                         }
                         else -> {
                             canvas.drawText("-", cellX + (colDateWidth / 2f), rowTop + 11.5f, dashPaint)
@@ -765,8 +804,13 @@ object AttendanceExportHelper {
                 canvas.drawText("$aCount", cellX + (colAWidth / 2f), rowTop + 11.5f, centerRowPaint)
                 cellX += colAWidth
 
+                // C Total
+                canvas.drawText("$cCount", cellX + (colCWidth / 2f), rowTop + 11.5f, centerRowPaint)
+                cellX += colCWidth
+
                 // Pct
-                val pct = if (visibleDates.isNotEmpty()) (pCount * 100.0 / visibleDates.size) else 0.0
+                val held = (visibleDates.size - cCount).coerceAtLeast(0)
+                val pct = if (held > 0) (pCount * 100.0 / held) else 0.0
                 val pctPaint = Paint(centerRowPaint).apply {
                     color = if (pct >= 75.0) Color.rgb(22, 163, 74) else if (pct >= 60.0) Color.rgb(217, 119, 6) else Color.rgb(220, 38, 38)
                     typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
@@ -784,11 +828,9 @@ object AttendanceExportHelper {
                     strokeWidth = 1f
                 }
 
-                // Left: Faculty Signature
                 canvas.drawLine(marginLeft, sigY, marginLeft + 150f, sigY, linePaint)
                 canvas.drawText("Faculty Signature: ${options.facultyName}", marginLeft, sigY + 14f, subTitlePaint)
 
-                // Right: HOD Signature
                 val hodX = pageWidth - marginRight - 150f
                 canvas.drawLine(hodX, sigY, hodX + 150f, sigY, linePaint)
                 canvas.drawText("Head of Department Signature", hodX, sigY + 14f, subTitlePaint)

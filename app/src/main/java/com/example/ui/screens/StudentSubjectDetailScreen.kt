@@ -21,6 +21,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -149,9 +150,20 @@ fun StudentSubjectDetailScreen(
         }.sortedByDescending { it.date }
     }
 
-    val presentCount = subjectAttendance.count { it.status.equals("P", ignoreCase = true) || it.status.equals("present", ignoreCase = true) }
-    val absentCount = subjectAttendance.count { it.status.equals("A", ignoreCase = true) || it.status.equals("absent", ignoreCase = true) }
-    val totalHeld = subjectAttendance.size
+    val isCancelledRecord: (AttendanceRecordEntity) -> Boolean = { rec ->
+        rec.status.equals("CANCELLED", ignoreCase = true) || rec.status.equals("C", ignoreCase = true)
+    }
+    val isPresentRecord: (AttendanceRecordEntity) -> Boolean = { rec ->
+        rec.status.equals("P", ignoreCase = true) || rec.status.equals("present", ignoreCase = true)
+    }
+    val isAbsentRecord: (AttendanceRecordEntity) -> Boolean = { rec ->
+        rec.status.equals("A", ignoreCase = true) || rec.status.equals("absent", ignoreCase = true)
+    }
+
+    val presentCount = subjectAttendance.count { isPresentRecord(it) }
+    val absentCount = subjectAttendance.count { isAbsentRecord(it) }
+    val cancelledCount = subjectAttendance.count { isCancelledRecord(it) }
+    val totalHeld = presentCount + absentCount
     val attendancePct = if (totalHeld > 0) (presentCount * 100f) / totalHeld else 0f
 
     // Color code: green (>=75%), amber (50-74.9%), red (<50%)
@@ -165,12 +177,13 @@ fun StudentSubjectDetailScreen(
     // Interactive correction dialog state
     var recordToEdit by remember { mutableStateOf<AttendanceRecordEntity?>(null) }
 
-    // Filter mode for session history: ALL, PRESENT, ABSENT
+    // Filter mode for session history: ALL, PRESENT, CANCELLED, ABSENT
     var selectedFilter by remember { mutableStateOf("ALL") }
     val filteredRecords = remember(subjectAttendance, selectedFilter) {
         when (selectedFilter) {
-            "PRESENT" -> subjectAttendance.filter { it.status.equals("P", ignoreCase = true) || it.status.equals("present", ignoreCase = true) }
-            "ABSENT" -> subjectAttendance.filter { it.status.equals("A", ignoreCase = true) || it.status.equals("absent", ignoreCase = true) }
+            "PRESENT" -> subjectAttendance.filter { isPresentRecord(it) }
+            "CANCELLED" -> subjectAttendance.filter { isCancelledRecord(it) }
+            "ABSENT" -> subjectAttendance.filter { isAbsentRecord(it) }
             else -> subjectAttendance
         }
     }
@@ -187,10 +200,11 @@ fun StudentSubjectDetailScreen(
             }
         }
         groups.entries.sortedByDescending { it.key }.map { entry ->
-            val monthP = entry.value.count { it.status.equals("P", ignoreCase = true) || it.status.equals("present", ignoreCase = true) }
-            val monthTotal = entry.value.size
-            val monthPct = if (monthTotal > 0) (monthP * 100f) / monthTotal else 0f
-            Triple(entry.key, monthPct, "$monthP/$monthTotal")
+            val monthP = entry.value.count { isPresentRecord(it) }
+            val monthA = entry.value.count { isAbsentRecord(it) }
+            val monthHeld = monthP + monthA
+            val monthPct = if (monthHeld > 0) (monthP * 100f) / monthHeld else 0f
+            Triple(entry.key, monthPct, "$monthP/$monthHeld")
         }
     }
 
@@ -294,6 +308,7 @@ fun StudentSubjectDetailScreen(
                     totalHeld = totalHeld,
                     presentCount = presentCount,
                     absentCount = absentCount,
+                    cancelledCount = cancelledCount,
                     statusColor = statusColor,
                     isDarkTheme = isDarkTheme
                 )
@@ -350,7 +365,7 @@ fun StudentSubjectDetailScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Filter chips: All, Present, Absent
+                    // Filter chips: All, Present, Cancelled, Absent
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -374,6 +389,18 @@ fun StudentSubjectDetailScreen(
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = Color(0xFF10B981).copy(alpha = 0.2f),
                                 selectedLabelColor = Color(0xFF047857)
+                            )
+                        )
+                        FilterChip(
+                            selected = selectedFilter == "CANCELLED",
+                            onClick = { selectedFilter = "CANCELLED" },
+                            label = { Text("Cancelled ($cancelledCount)") },
+                            leadingIcon = {
+                                Icon(Icons.Default.EventBusy, contentDescription = null, modifier = Modifier.size(14.dp))
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Color(0xFF64748B).copy(alpha = 0.2f),
+                                selectedLabelColor = Color(0xFF334155)
                             )
                         )
                         FilterChip(
@@ -430,6 +457,13 @@ fun StudentSubjectDetailScreen(
     // Interactive Edit Attendance Dialog
     recordToEdit?.let { record ->
         val isCurrentPresent = record.status.equals("P", ignoreCase = true) || record.status.equals("present", ignoreCase = true)
+        val isCurrentCancelled = record.status.equals("CANCELLED", ignoreCase = true) || record.status.equals("C", ignoreCase = true)
+        val currentStatusLabel = when {
+            isCurrentPresent -> "Present (P)"
+            isCurrentCancelled -> "Class Cancelled"
+            else -> "Absent (A)"
+        }
+
         AlertDialog(
             onDismissRequest = { recordToEdit = null },
             title = {
@@ -448,7 +482,7 @@ fun StudentSubjectDetailScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Currently marked: ${if (isCurrentPresent) "Present (P)" else "Absent (A)"}",
+                        text = "Currently marked: $currentStatusLabel",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -461,7 +495,7 @@ fun StudentSubjectDetailScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
                             onClick = {
@@ -482,11 +516,40 @@ fun StudentSubjectDetailScreen(
                                 contentColor = Color.White
                             ),
                             shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)
                         ) {
-                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Present")
+                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("Present", maxLines = 1, style = MaterialTheme.typography.labelMedium)
+                        }
+
+                        // Class Cancelled option
+                        Button(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                try {
+                                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 80)
+                                } catch (_: Exception) {}
+                                viewModel.updateStudentAttendanceStatus(
+                                    date = record.date,
+                                    slotId = record.scheduleSlotId,
+                                    courseId = courseId,
+                                    newStatus = "CANCELLED"
+                                )
+                                recordToEdit = null
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF64748B),
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1.2f),
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)
+                        ) {
+                            Icon(Icons.Default.EventBusy, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("Cancelled", maxLines = 1, style = MaterialTheme.typography.labelMedium)
                         }
 
                         Button(
@@ -508,11 +571,12 @@ fun StudentSubjectDetailScreen(
                                 contentColor = Color.White
                             ),
                             shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)
                         ) {
-                            Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Absent")
+                            Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("Absent", maxLines = 1, style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
@@ -550,6 +614,7 @@ fun SubjectHeroStatCard(
     totalHeld: Int,
     presentCount: Int,
     absentCount: Int,
+    cancelledCount: Int = 0,
     statusColor: Color,
     isDarkTheme: Boolean
 ) {
@@ -606,7 +671,7 @@ fun SubjectHeroStatCard(
                     ) {
                         Text(
                             text = when {
-                                totalHeld == 0 -> "No sessions yet"
+                                totalHeld == 0 -> "No sessions held"
                                 attendancePct >= 75f -> "Eligible (≥75%)"
                                 attendancePct >= 50f -> "Borderline (50-75%)"
                                 else -> "At Risk (<50%)"
@@ -648,10 +713,10 @@ fun SubjectHeroStatCard(
             HorizontalDivider(color = if (isDarkTheme) Color(0xFF334155) else Color(0xFFF1F5F9))
             Spacer(modifier = Modifier.height(16.dp))
 
-            // 3-Metric Breakdown Row
+            // 4-Metric Breakdown Row (Present, Absent, Cancelled, Total Held)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceAround
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 SubjectMetricCell(
                     label = "Present",
@@ -663,6 +728,12 @@ fun SubjectHeroStatCard(
                     label = "Absent",
                     value = "$absentCount",
                     color = Color(0xFFEF4444),
+                    icon = Icons.Default.Close
+                )
+                SubjectMetricCell(
+                    label = "Cancelled",
+                    value = "$cancelledCount",
+                    color = Color(0xFF64748B),
                     icon = Icons.Default.EventBusy
                 )
                 SubjectMetricCell(
@@ -912,7 +983,22 @@ fun SessionHistoryItem(
     onTap: () -> Unit
 ) {
     val isPresent = record.status.equals("P", ignoreCase = true) || record.status.equals("present", ignoreCase = true)
-    val itemColor = if (isPresent) Color(0xFF10B981) else Color(0xFFEF4444)
+    val isCancelled = record.status.equals("CANCELLED", ignoreCase = true) || record.status.equals("C", ignoreCase = true)
+    val itemColor = when {
+        isPresent -> Color(0xFF10B981)
+        isCancelled -> Color(0xFF64748B)
+        else -> Color(0xFFEF4444)
+    }
+    val statusLabel = when {
+        isPresent -> "PRESENT"
+        isCancelled -> "CANCELLED"
+        else -> "ABSENT"
+    }
+    val statusIcon = when {
+        isPresent -> Icons.Default.Check
+        isCancelled -> Icons.Default.EventBusy
+        else -> Icons.Default.Close
+    }
 
     val dateFormatted = remember(record.date) {
         try {
@@ -957,7 +1043,7 @@ fun SessionHistoryItem(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (isPresent) Icons.Default.Check else Icons.Default.Close,
+                        imageVector = statusIcon,
                         contentDescription = null,
                         tint = itemColor,
                         modifier = Modifier.size(20.dp)
@@ -975,8 +1061,9 @@ fun SessionHistoryItem(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     val slotTime = slot?.let { "${it.startTime} - ${it.endTime}" } ?: "Recorded Session"
+                    val hintText = if (isCancelled) "$slotTime • Class Cancelled • Tap to edit" else "$slotTime • Tap to edit"
                     Text(
-                        text = "$slotTime • Tap to edit",
+                        text = hintText,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -989,7 +1076,7 @@ fun SessionHistoryItem(
                 border = BorderStroke(1.dp, itemColor.copy(alpha = 0.35f))
             ) {
                 Text(
-                    text = if (isPresent) "PRESENT" else "ABSENT",
+                    text = statusLabel,
                     color = itemColor,
                     fontWeight = FontWeight.ExtraBold,
                     style = MaterialTheme.typography.labelSmall,

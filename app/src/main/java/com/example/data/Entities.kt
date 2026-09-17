@@ -56,6 +56,7 @@ data class StudentEntity(
     val name: String,
     val rollNumber: String,
     val courseId: String,
+    val email: String = "",
     val userId: String = "",
     val syncStatus: String = SyncStatus.SYNCED.name,
     val updatedAt: Long = System.currentTimeMillis(),
@@ -174,4 +175,51 @@ data class EnrollmentEntity(
     val updatedAt: Long = System.currentTimeMillis(),
     val deviceId: String = ""
 )
+
+/**
+ * Official timetable lecture pushed by faculty members matching student's email.
+ */
+@Entity(
+    tableName = "official_classes",
+    indices = [
+        Index(value = ["dayOfWeek"]),
+        Index(value = ["courseId"]),
+        Index(value = ["isHidden"])
+    ]
+)
+data class OfficialClassEntity(
+    @PrimaryKey val slotId: String,
+    val courseId: String,
+    val courseName: String,
+    val courseCode: String,
+    val dayOfWeek: String,
+    val startTime: String,
+    val endTime: String,
+    val room: String,
+    val section: String,
+    val facultyName: String,
+    val facultyEmail: String = "",
+    val isHidden: Boolean = false,
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+/**
+ * Official attendance record marked by faculty for a student session.
+ */
+@Entity(
+    tableName = "official_attendance",
+    indices = [
+        Index(value = ["date", "slotId"])
+    ]
+)
+data class OfficialAttendanceEntity(
+    @PrimaryKey val id: String, // "${date}_${slotId}"
+    val date: String,
+    val slotId: String,
+    val courseId: String,
+    val courseName: String,
+    val status: String, // "P", "A", "C", "CANCELLED"
+    val markedAt: Long = System.currentTimeMillis()
+)
+
 

@@ -10,6 +10,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -127,10 +129,16 @@ fun StudentDashboardContent(
     val haptic = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
     var currentTab by remember { mutableIntStateOf(0) }
+    var timetableMode by rememberSaveable { mutableStateOf("OFFICIAL") } // "OFFICIAL" (default) or "PERSONAL"
 
-    // Auto-sync from cloud and run auto-absence engine
+    val officialClasses by viewModel.activeOfficialClasses.collectAsState()
+    val officialAttendance by viewModel.officialAttendance.collectAsState()
+    val studentEmail = remember { viewModel.getStudentEmail() }
+
+    // Auto-sync from cloud, student official feed, and run auto-absence engine
     LaunchedEffect(Unit) {
         viewModel.syncDataFromFirebase()
+        viewModel.syncOfficialStudentFeed()
         viewModel.autoMarkPastClassesAsAbsent()
     }
 
@@ -210,119 +218,192 @@ fun StudentDashboardContent(
                     var isLoading by remember { mutableStateOf(true) }
                     val listState = rememberLazyListState()
 
-                    LaunchedEffect(page) {
+                    LaunchedEffect(page, timetableMode) {
                         isLoading = true
-                        delay(200)
+                        delay(180)
                         isLoading = false
                     }
 
-                    val timelineItems = remember(scheduleSlots) {
-                        buildChronologicalTimeline(scheduleSlots)
-                    }
+                    if (timetableMode == "OFFICIAL") {
+                        val dayOfficialClasses = remember(officialClasses, dayName) {
+                            officialClasses.filter { it.dayOfWeek.equals(dayName, ignoreCase = true) }
+                        }
 
-                    LaunchedEffect(timelineItems, isLoading) {
-                        if (!isLoading && timelineItems.isNotEmpty() && isTodayPage) {
-                            val liveIndex = timelineItems.indexOfFirst { item ->
-                                item is ScheduleTimelineItem.SlotItem && isSlotLive(item.slot, LocalTime.now())
-                            }
-                            if (liveIndex >= 0) {
-                                delay(200)
-                                listState.animateScrollToItem(liveIndex)
+                        AnimatedContent(
+                            targetState = isLoading,
+                            transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(250)) },
+                            label = "official_load_anim"
+                        ) { loading ->
+                            if (loading) {
+                                LazyColumn(
+                                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    items(3) { SkeletonCard() }
+                                }
+                            } else if (dayOfficialClasses.isEmpty()) {
+                                EmptyOfficialScheduleIllustration(
+                                    day = dayName,
+                                    studentEmail = studentEmail,
+                                    onSync = { viewModel.syncOfficialStudentFeed() }
+                                )
+                            } else {
+                                LazyColumn(
+                                    state = listState,
+                                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    items(
+                                        items = dayOfficialClasses,
+                                        key = { it.slotId }
+                                    ) { oClass ->
+                                        val dateStr = pageDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
+                                        val attRecord = officialAttendance.firstOrNull {
+                                            it.date == dateStr && (it.slotId == oClass.slotId || it.courseId == oClass.courseId)
+                                        }
+                                        OfficialGlassLectureCard(
+                                            officialClass = oClass,
+                                            attendanceRecord = attRecord,
+                                            onHide = {
+                                                viewModel.hideOfficialClass(oClass.slotId)
+                                                android.widget.Toast.makeText(context, "Class hidden. Restore anytime in Profile.", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
-                    }
+                    } else {
+                        val timelineItems = remember(scheduleSlots) {
+                            buildChronologicalTimeline(scheduleSlots)
+                        }
 
-                    AnimatedContent(
-                        targetState = isLoading,
-                        transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) },
-                        label = "load_anim"
-                    ) { loading ->
-                        if (loading) {
-                            LazyColumn(
-                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 120.dp),
-                                verticalArrangement = Arrangement.spacedBy(16.dp)
-                            ) {
-                                items(3) { SkeletonCard() }
+                        LaunchedEffect(timelineItems, isLoading) {
+                            if (!isLoading && timelineItems.isNotEmpty() && isTodayPage) {
+                                val liveIndex = timelineItems.indexOfFirst { item ->
+                                    item is ScheduleTimelineItem.SlotItem && isSlotLive(item.slot, LocalTime.now())
+                                }
+                                if (liveIndex >= 0) {
+                                    delay(200)
+                                    listState.animateScrollToItem(liveIndex)
+                                }
                             }
-                        } else if (timelineItems.isEmpty()) {
-                            EmptyStudentScheduleIllustration(
-                                day = dayName,
-                                onImportAI = { navController.navigate("import_timetable") }
-                            )
-                        } else {
-                            LazyColumn(
-                                state = listState,
-                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 120.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                itemsIndexed(
-                                    items = timelineItems,
-                                    key = { _, item ->
-                                        when (item) {
-                                            is ScheduleTimelineItem.SlotItem -> item.slot.id
-                                            is ScheduleTimelineItem.BreakItem -> item.id
-                                        }
-                                    }
-                                ) { index, item ->
-                                    when (item) {
-                                        is ScheduleTimelineItem.BreakItem -> {
-                                            ScheduleBreakCard(breakItem = item)
-                                        }
-                                        is ScheduleTimelineItem.SlotItem -> {
-                                            val slot = item.slot
-                                            val isLive = isTodayPage && isSlotLive(slot, currentLiveTime)
-                                            val timeHint = if (isTodayPage) getRelativeTimeHint(slot, currentLiveTime) else null
-                                            val dateStr = pageDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
+                        }
 
-                                            // Check if student already marked attendance for this specific slot & course on this date
-                                            val attendanceRecord = allAttendance.firstOrNull {
-                                                it.date == dateStr && it.studentId == "self" && (
-                                                    it.scheduleSlotId == slot.id ||
-                                                    (it.courseId == slot.courseId && it.courseId.isNotBlank())
+                        AnimatedContent(
+                            targetState = isLoading,
+                            transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) },
+                            label = "load_anim"
+                        ) { loading ->
+                            if (loading) {
+                                LazyColumn(
+                                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    items(3) { SkeletonCard() }
+                                }
+                            } else if (timelineItems.isEmpty()) {
+                                EmptyStudentScheduleIllustration(
+                                    day = dayName,
+                                    onImportAI = { navController.navigate("import_timetable") }
+                                )
+                            } else {
+                                LazyColumn(
+                                    state = listState,
+                                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    itemsIndexed(
+                                        items = timelineItems,
+                                        key = { _, item ->
+                                            when (item) {
+                                                is ScheduleTimelineItem.SlotItem -> item.slot.id
+                                                is ScheduleTimelineItem.BreakItem -> item.id
+                                            }
+                                        }
+                                    ) { index, item ->
+                                        when (item) {
+                                            is ScheduleTimelineItem.BreakItem -> {
+                                                ScheduleBreakCard(breakItem = item)
+                                            }
+                                            is ScheduleTimelineItem.SlotItem -> {
+                                                val slot = item.slot
+                                                val isLive = isTodayPage && isSlotLive(slot, currentLiveTime)
+                                                val timeHint = if (isTodayPage) getRelativeTimeHint(slot, currentLiveTime) else null
+                                                val dateStr = pageDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
+
+                                                // Check if student already marked attendance for this specific slot & course on this date
+                                                val attendanceRecord = allAttendance.firstOrNull {
+                                                    it.date == dateStr && it.studentId == "self" && (
+                                                        it.scheduleSlotId == slot.id ||
+                                                        (it.courseId == slot.courseId && it.courseId.isNotBlank())
+                                                    )
+                                                }
+                                                val isMarkedPresent = attendanceRecord?.status?.equals("P", ignoreCase = true) == true ||
+                                                        attendanceRecord?.status?.equals("present", ignoreCase = true) == true
+                                                val isMarkedCancelled = attendanceRecord?.status?.equals("CANCELLED", ignoreCase = true) == true ||
+                                                        attendanceRecord?.status?.equals("C", ignoreCase = true) == true
+
+                                                val subjectStats = courseAttendanceMap[slot.courseId]
+
+                                                StudentGlassLectureCard(
+                                                    slot = slot,
+                                                    course = courseMap[slot.courseId],
+                                                    isLive = isLive,
+                                                    isMarkedPresent = isMarkedPresent,
+                                                    isMarkedCancelled = isMarkedCancelled,
+                                                    timeHint = timeHint,
+                                                    subjectStats = subjectStats,
+                                                    onMarkSelfAttendance = {
+                                                        val ctx = context
+                                                        if (isMarkedPresent) {
+                                                            // Undo / Unmark attendance if clicked again
+                                                            SoundFeedbackHelper.performSuccessHaptic(ctx)
+                                                            viewModel.deleteSelfAttendance(
+                                                                date = dateStr,
+                                                                slotId = slot.id,
+                                                                courseId = slot.courseId
+                                                            )
+                                                        } else {
+                                                            // Mark attendance as Present
+                                                            SoundFeedbackHelper.playApplePaySuccessDing(ctx)
+                                                            SoundFeedbackHelper.performSuccessHaptic(ctx)
+                                                            viewModel.markSelfAttendance(
+                                                                date = dateStr,
+                                                                slotId = slot.id,
+                                                                courseId = slot.courseId,
+                                                                status = "P"
+                                                            )
+                                                        }
+                                                    },
+                                                    onMarkCancelled = {
+                                                        val ctx = context
+                                                        if (isMarkedCancelled) {
+                                                            SoundFeedbackHelper.performSuccessHaptic(ctx)
+                                                            viewModel.deleteSelfAttendance(
+                                                                date = dateStr,
+                                                                slotId = slot.id,
+                                                                courseId = slot.courseId
+                                                            )
+                                                        } else {
+                                                            SoundFeedbackHelper.performSuccessHaptic(ctx)
+                                                            viewModel.markSelfAttendance(
+                                                                date = dateStr,
+                                                                slotId = slot.id,
+                                                                courseId = slot.courseId,
+                                                                status = "CANCELLED"
+                                                            )
+                                                        }
+                                                    },
+                                                    onClick = {
+                                                        if (slot.courseId.isNotBlank()) {
+                                                            navController.navigate("student_subject_detail/${slot.courseId}")
+                                                        } else {
+                                                            navController.navigate("student_report")
+                                                        }
+                                                    }
                                                 )
                                             }
-                                            val isMarkedPresent = attendanceRecord?.status?.equals("P", ignoreCase = true) == true ||
-                                                    attendanceRecord?.status?.equals("present", ignoreCase = true) == true
-
-                                            val subjectStats = courseAttendanceMap[slot.courseId]
-
-                                            StudentGlassLectureCard(
-                                                slot = slot,
-                                                course = courseMap[slot.courseId],
-                                                isLive = isLive,
-                                                isMarkedPresent = isMarkedPresent,
-                                                timeHint = timeHint,
-                                                subjectStats = subjectStats,
-                                                onMarkSelfAttendance = {
-                                                    val ctx = context
-                                                    if (isMarkedPresent) {
-                                                        // Undo / Unmark attendance if clicked again
-                                                        SoundFeedbackHelper.performSuccessHaptic(ctx)
-                                                        viewModel.deleteSelfAttendance(
-                                                            date = dateStr,
-                                                            slotId = slot.id,
-                                                            courseId = slot.courseId
-                                                        )
-                                                    } else {
-                                                        // Mark attendance as Present
-                                                        SoundFeedbackHelper.playApplePaySuccessDing(ctx)
-                                                        SoundFeedbackHelper.performSuccessHaptic(ctx)
-                                                        viewModel.markSelfAttendance(
-                                                            date = dateStr,
-                                                            slotId = slot.id,
-                                                            courseId = slot.courseId,
-                                                            status = "P"
-                                                        )
-                                                    }
-                                                },
-                                                onClick = {
-                                                    if (slot.courseId.isNotBlank()) {
-                                                        navController.navigate("student_subject_detail/${slot.courseId}")
-                                                    } else {
-                                                        navController.navigate("student_report")
-                                                    }
-                                                }
-                                            )
                                         }
                                     }
                                 }
@@ -332,22 +413,127 @@ fun StudentDashboardContent(
                 }
             }
 
-            // 5. FLOATING GLASS NAVIGATION BAR FOR STUDENT
-            FloatingGlassNavBar(
-                selectedTabIndex = currentTab,
-                onTabSelected = { currentTab = it },
-                onNavigateSchedule = { currentTab = 0 },
-                onNavigateAIImport = { navController.navigate("import_timetable") },
-                onNavigateAddClass = { navController.navigate("add_edit_batch") },
-                onNavigateManageClasses = { navController.navigate("manage_classes") },
-                onNavigateProfile = { navController.navigate("profile") },
-                isDarkTheme = isDarkTheme,
-                role = "student",
-                onNavigateReport = { navController.navigate("student_report") },
+            // 5. UNIFIED 3-PART BOTTOM CAPSULE NAVBAR (Official • Personal • Profile)
+            Surface(
+                shape = RoundedCornerShape(32.dp),
+                color = if (isDarkTheme) Color(0xFF1E293B).copy(alpha = 0.96f) else Color.White.copy(alpha = 0.96f),
+                tonalElevation = 10.dp,
+                shadowElevation = 12.dp,
+                border = BorderStroke(1.dp, if (isDarkTheme) Color(0xFF334155) else accentColor.copy(alpha = 0.25f)),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
-            )
+                    .padding(bottom = 16.dp)
+                    .padding(horizontal = 20.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val isOfficial = (timetableMode == "OFFICIAL")
+                    val isPersonal = (timetableMode == "PERSONAL")
+
+                    // 1. OFFICIAL TIMETABLE TAB
+                    Box(
+                        modifier = Modifier
+                            .weight(1.15f)
+                            .clip(RoundedCornerShape(26.dp))
+                            .background(if (isOfficial) accentColor else Color.Transparent)
+                            .clickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                timetableMode = "OFFICIAL"
+                            }
+                            .padding(vertical = 11.dp, horizontal = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                Icons.Default.School,
+                                contentDescription = "Official Timetable",
+                                tint = if (isOfficial) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(17.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "Official",
+                                fontWeight = if (isOfficial) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 13.sp,
+                                color = if (isOfficial) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    // 2. PERSONAL TIMETABLE TAB
+                    Box(
+                        modifier = Modifier
+                            .weight(1.15f)
+                            .clip(RoundedCornerShape(26.dp))
+                            .background(if (isPersonal) accentColor else Color.Transparent)
+                            .clickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                timetableMode = "PERSONAL"
+                            }
+                            .padding(vertical = 11.dp, horizontal = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Person,
+                                contentDescription = "Personal Timetable",
+                                tint = if (isPersonal) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(17.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "Personal",
+                                fontWeight = if (isPersonal) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 13.sp,
+                                color = if (isPersonal) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    // 3. PROFILE TAB
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(26.dp))
+                            .background(Color.Transparent)
+                            .clickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                navController.navigate("profile")
+                            }
+                            .padding(vertical = 11.dp, horizontal = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                Icons.Default.AccountCircle,
+                                contentDescription = "Profile",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(17.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "Profile",
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -659,9 +845,11 @@ fun StudentGlassLectureCard(
     course: CourseEntity? = null,
     isLive: Boolean = false,
     isMarkedPresent: Boolean = false,
+    isMarkedCancelled: Boolean = false,
     timeHint: String? = null,
     subjectStats: Pair<Int, Int>? = null,
     onMarkSelfAttendance: () -> Unit,
+    onMarkCancelled: () -> Unit = {},
     onClick: () -> Unit
 ) {
     val subjectColors = listOf(
@@ -907,11 +1095,100 @@ fun StudentGlassLectureCard(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // 6. STUDENT SELF ATTENDANCE BUTTON
-                StudentSelfAttendanceButton(
-                    isMarked = isMarkedPresent,
-                    onMark = onMarkSelfAttendance
-                )
+                // 6. STUDENT SELF ATTENDANCE & CLASS CANCELLED ACTION ROW
+                if (isMarkedCancelled) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color(0xFF64748B).copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, Color(0xFF64748B).copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.EventBusy,
+                                    contentDescription = null,
+                                    tint = Color(0xFF64748B),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "CLASS CANCELLED",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF64748B),
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(
+                                    onClick = onMarkCancelled,
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        "Undo",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Button(
+                                    onClick = onMarkSelfAttendance,
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text("Mark Present", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(modifier = Modifier.weight(1.3f)) {
+                            StudentSelfAttendanceButton(
+                                isMarked = isMarkedPresent,
+                                onMark = onMarkSelfAttendance
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = onMarkCancelled,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = Color(0xFF64748B)
+                            ),
+                            border = BorderStroke(1.2.dp, Color(0xFF64748B).copy(alpha = 0.45f))
+                        ) {
+                            Icon(
+                                Icons.Default.EventBusy,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp),
+                                tint = Color(0xFF64748B)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                "Cancelled",
+                                maxLines = 1,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -1123,6 +1400,353 @@ fun EmptyStudentScheduleIllustration(
             Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(8.dp))
             Text("Import Timetable with AI", fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+private data class StatusBadgeConfig(
+    val bg: Color,
+    val border: Color,
+    val label: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val tint: Color
+)
+
+@Composable
+fun OfficialGlassLectureCard(
+    officialClass: com.example.data.OfficialClassEntity,
+    attendanceRecord: com.example.data.OfficialAttendanceEntity?,
+    onHide: () -> Unit
+) {
+    val isDark = isSystemInDarkTheme()
+    var showHideConfirm by remember { mutableStateOf(false) }
+
+    if (showHideConfirm) {
+        AlertDialog(
+            onDismissRequest = { showHideConfirm = false },
+            title = { Text("Hide this class?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("This will hide '${officialClass.courseName}' from your active schedule.\n\nYou can unhide it anytime from your Profile settings.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showHideConfirm = false
+                        onHide()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Hide Class")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showHideConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(
+                elevation = 3.dp,
+                shape = RoundedCornerShape(20.dp),
+                spotColor = Color(0xFF3B82F6).copy(alpha = 0.15f)
+            ),
+        shape = RoundedCornerShape(20.dp),
+        color = if (isDark) Color(0xFF1E293B) else Color.White,
+        border = BorderStroke(
+            1.dp,
+            if (isDark) Color(0xFF334155) else Color(0xFFE2E8F0)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Header Row: Course Code + Time + Hide Icon
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                    ) {
+                        Text(
+                            text = officialClass.courseCode.ifBlank { "OFFICIAL" },
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                    ) {
+                        Text(
+                            text = "${officialClass.startTime} - ${officialClass.endTime}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = { showHideConfirm = true },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.Default.VisibilityOff,
+                        contentDescription = "Hide Class",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Course Name
+            Text(
+                text = officialClass.courseName,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Room and Section info
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (officialClass.room.isNotBlank()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.MeetingRoom,
+                            contentDescription = null,
+                            modifier = Modifier.size(13.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            officialClass.room,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                if (officialClass.section.isNotBlank()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.Group,
+                            contentDescription = null,
+                            modifier = Modifier.size(13.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            officialClass.section,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Faculty Tag
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.School,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = Color(0xFF3B82F6)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = officialClass.facultyName.ifBlank { "Faculty Instructor" },
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = Color(0xFF3B82F6).copy(alpha = 0.12f)
+                ) {
+                    Text(
+                        text = "Official Faculty",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF2563EB),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Live Attendance Status Badge (View Only Mode)
+            val attStatus = attendanceRecord?.status?.uppercase()
+            val badgeConfig = when {
+                attStatus == "P" || attStatus == "PRESENT" -> {
+                    StatusBadgeConfig(
+                        bg = Color(0xFF10B981).copy(alpha = 0.12f),
+                        border = Color(0xFF10B981).copy(alpha = 0.35f),
+                        label = "✓ Marked Present by Faculty",
+                        icon = Icons.Default.CheckCircle,
+                        tint = Color(0xFF059669)
+                    )
+                }
+                attStatus == "A" || attStatus == "ABSENT" -> {
+                    StatusBadgeConfig(
+                        bg = Color(0xFFEF4444).copy(alpha = 0.12f),
+                        border = Color(0xFFEF4444).copy(alpha = 0.35f),
+                        label = "✗ Marked Absent by Faculty",
+                        icon = Icons.Default.Cancel,
+                        tint = Color(0xFFDC2626)
+                    )
+                }
+                attStatus == "CANCELLED" || attStatus == "C" -> {
+                    StatusBadgeConfig(
+                        bg = Color(0xFFF59E0B).copy(alpha = 0.12f),
+                        border = Color(0xFFF59E0B).copy(alpha = 0.35f),
+                        label = "🚫 Class Cancelled by Faculty",
+                        icon = Icons.Default.EventBusy,
+                        tint = Color(0xFFD97706)
+                    )
+                }
+                else -> {
+                    StatusBadgeConfig(
+                        bg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                        border = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                        label = "⏳ Scheduled • Awaiting Faculty Attendance",
+                        icon = Icons.Default.Schedule,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = badgeConfig.bg,
+                border = BorderStroke(1.dp, badgeConfig.border)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(badgeConfig.icon, contentDescription = null, tint = badgeConfig.tint, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        badgeConfig.label,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = badgeConfig.tint
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        "View-Only",
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = badgeConfig.tint.copy(alpha = 0.7f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun EmptyOfficialScheduleIllustration(
+    day: String,
+    studentEmail: String,
+    onSync: () -> Unit = {}
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(100.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Default.School,
+                contentDescription = null,
+                modifier = Modifier.size(50.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+        Spacer(modifier = Modifier.height(18.dp))
+        Text(
+            text = "No Official Classes on $day",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Classes automatically appear here as your faculty members add your campus email to their course batches.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = studentEmail.ifBlank { "student.demo@campus.edu" },
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(18.dp))
+        FilledTonalButton(
+            onClick = onSync,
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Sync Official Feed", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
         }
     }
 }

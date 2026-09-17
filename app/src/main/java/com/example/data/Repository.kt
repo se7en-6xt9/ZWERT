@@ -9,7 +9,7 @@ class Repository(val dao: AppDao) {
             val courses = data.courses.map { CourseEntity(it.id, it.name, it.code, it.credits) }
             dao.insertCourses(courses)
             val students = data.courses.flatMap { course ->
-                course.students.map { student -> StudentEntity(student.id, student.name, student.rollNumber, course.id) }
+                course.students.map { student -> StudentEntity(student.id, student.name, student.rollNumber, course.id, email = "") }
             }
             dao.insertStudents(students)
             val slots = data.weeklySchedule.map { slot ->
@@ -36,7 +36,7 @@ class Repository(val dao: AppDao) {
                 newCourses.add(CourseEntity(courseId, courseName, courseCode, 0))
                 batch.students?.forEach { student ->
                     val studentId = student.id?.takeIf { it.isNotBlank() } ?: "student_${java.util.UUID.randomUUID()}"
-                    newStudents.add(StudentEntity(studentId, student.name ?: "Unknown", student.rollNumber ?: "", courseId))
+                    newStudents.add(StudentEntity(studentId, student.name ?: "Unknown", student.rollNumber ?: "", courseId, email = student.email ?: ""))
                 }
                 batch.weeklySchedule?.forEach { schedule ->
                     val slotId = "slot_${java.util.UUID.randomUUID()}"
@@ -149,5 +149,26 @@ class Repository(val dao: AppDao) {
     }
     suspend fun replaceAttendanceForSession(date: String, scheduleSlotId: String, records: List<AttendanceRecordEntity>) = withContext(Dispatchers.IO) {
         dao.replaceAttendanceForSession(date, scheduleSlotId, records)
+    }
+
+    // ==========================================
+    // Official Classes (ERP Feed from Teachers)
+    // ==========================================
+    fun getActiveOfficialClasses() = dao.getActiveOfficialClasses()
+    fun getHiddenOfficialClasses() = dao.getHiddenOfficialClasses()
+    suspend fun insertOfficialClasses(classes: List<OfficialClassEntity>) = withContext(Dispatchers.IO) {
+        dao.insertOfficialClasses(classes)
+    }
+    suspend fun setOfficialClassHidden(slotId: String, hidden: Boolean) = withContext(Dispatchers.IO) {
+        dao.setOfficialClassHidden(slotId, hidden)
+    }
+    suspend fun deleteOfficialClass(slotId: String) = withContext(Dispatchers.IO) {
+        dao.deleteOfficialClass(slotId)
+    }
+
+    // Official Attendance
+    fun getAllOfficialAttendance() = dao.getAllOfficialAttendance()
+    suspend fun insertOfficialAttendance(records: List<OfficialAttendanceEntity>) = withContext(Dispatchers.IO) {
+        dao.insertOfficialAttendance(records)
     }
 }

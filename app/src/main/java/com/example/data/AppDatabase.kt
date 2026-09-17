@@ -13,9 +13,11 @@ import androidx.room.RoomDatabase
         AttendanceRecordEntity::class,
         UserProfileEntity::class,
         AttendanceSessionEntity::class,
-        EnrollmentEntity::class
+        EnrollmentEntity::class,
+        OfficialClassEntity::class,
+        OfficialAttendanceEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

@@ -1168,7 +1168,7 @@ fun StudentAttendanceReportScreen(
                             popUpTo("student_dashboard") { inclusive = false }
                         }
                         1 -> { /* Already in register */ }
-                        4 -> navController.navigate("profile")
+                        2, 4 -> navController.navigate("profile")
                     }
                 },
                 onNavigateSchedule = {

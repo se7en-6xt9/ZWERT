@@ -172,6 +172,7 @@ fun DashboardContent(
 
                 val allCourses by viewModel.getAllCourses().collectAsState(initial = emptyList())
                 val courseMap = remember(allCourses) { allCourses.associateBy { it.id } }
+                val allAttendance by viewModel.getAllAttendance().collectAsState(initial = emptyList())
 
                 // 2. DAY-SELECTOR ROW WITH SLIDING INDICATOR & EDGE FADES
                 DaySelectorCard(
@@ -254,11 +255,38 @@ fun DashboardContent(
                                             val slot = item.slot
                                             val isLive = isTodayPage && isSlotLive(slot, currentLiveTime)
                                             val timeHint = if (isTodayPage) getRelativeTimeHint(slot, currentLiveTime) else null
+                                            val dateStr = pageDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
+
+                                            val sessionRecords = allAttendance.filter {
+                                                it.date == dateStr && (
+                                                    it.scheduleSlotId == slot.id ||
+                                                    (it.courseId == slot.courseId && it.courseId.isNotBlank())
+                                                )
+                                            }
+                                            val isCancelled = sessionRecords.any {
+                                                it.status.equals("CANCELLED", ignoreCase = true) || it.status.equals("C", ignoreCase = true)
+                                            }
+
                                             GlassLectureCard(
                                                 slot = slot,
                                                 course = courseMap[slot.courseId],
                                                 isLive = isLive,
                                                 timeHint = timeHint,
+                                                isCancelled = isCancelled,
+                                                onCancelClass = {
+                                                    viewModel.cancelClassSession(
+                                                        date = dateStr,
+                                                        slotId = slot.id,
+                                                        courseId = slot.courseId
+                                                    )
+                                                },
+                                                onUncancelClass = {
+                                                    viewModel.uncancelClassSession(
+                                                        date = dateStr,
+                                                        slotId = slot.id,
+                                                        courseId = slot.courseId
+                                                    )
+                                                },
                                                 onClick = { navController.navigate("lecture_view/${slot.id}") }
                                             )
                                         }
@@ -763,6 +791,9 @@ fun GlassLectureCard(
     course: CourseEntity? = null,
     isLive: Boolean = false,
     timeHint: String? = null,
+    isCancelled: Boolean = false,
+    onCancelClass: () -> Unit = {},
+    onUncancelClass: () -> Unit = {},
     onClick: () -> Unit
 ) {
     val subjectColors = listOf(Color(0xFFE57373), Color(0xFF81C784), Color(0xFF64B5F6), Color(0xFFFFD54F), Color(0xFFBA68C8))
@@ -951,7 +982,102 @@ fun GlassLectureCard(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                AnimatedAttendanceButton(onClick = onClick)
+                if (isCancelled) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color(0xFF64748B).copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, Color(0xFF64748B).copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.EventBusy,
+                                    contentDescription = null,
+                                    tint = Color(0xFF64748B),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "CLASS CANCELLED",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF64748B),
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(
+                                    onClick = onUncancelClass,
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        "Undo",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Button(
+                                    onClick = onClick,
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        "Mark Attendance",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = onClick,
+                            modifier = Modifier
+                                .weight(1.3f)
+                                .height(44.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Icon(Icons.Default.FactCheck, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Mark Attendance", maxLines = 1, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                        }
+
+                        OutlinedButton(
+                            onClick = onCancelClass,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = Color(0xFF64748B)
+                            ),
+                            border = BorderStroke(1.2.dp, Color(0xFF64748B).copy(alpha = 0.45f))
+                        ) {
+                            Icon(Icons.Default.EventBusy, contentDescription = null, modifier = Modifier.size(15.dp), tint = Color(0xFF64748B))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Cancel Class", maxLines = 1, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
             }
         }
     }

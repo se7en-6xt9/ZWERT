@@ -117,11 +117,13 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
     val presentCount = localAttendance.values.count { it == "P" }
     val absentCount = localAttendance.values.count { it == "A" }
     val lateCount = localAttendance.values.count { it == "L" }
-    val markedCount = presentCount + absentCount + lateCount
+    val cancelledCount = localAttendance.values.count { it == "CANCELLED" || it == "C" }
+    val markedCount = presentCount + absentCount + lateCount + cancelledCount
 
     val animPresent by animateIntAsState(presentCount, label = "present")
     val animAbsent by animateIntAsState(absentCount, label = "absent")
     val animLate by animateIntAsState(lateCount, label = "late")
+    val animCancelled by animateIntAsState(cancelledCount, label = "cancelled")
     val animMarked by animateIntAsState(markedCount, label = "marked")
     val animTotal by animateIntAsState(totalCount, label = "total")
     val animProgress by animateFloatAsState(if (totalCount == 0) 0f else markedCount.toFloat() / totalCount, label = "progress")
@@ -274,7 +276,7 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                             }
 
                             Text(
-                                text = "$animPresent P • $animAbsent A • $animLate L",
+                                text = if (animCancelled > 0) "$animPresent P • $animAbsent A • $animCancelled C" else "$animPresent P • $animAbsent A • $animLate L",
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF1E293B)
@@ -612,7 +614,11 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                                 ) {
                                     StatCard("Present", animPresent, Color(0xFF16A34A), Modifier.weight(1f))
                                     StatCard("Absent", animAbsent, Color(0xFFDC2626), Modifier.weight(1f))
-                                    StatCard("Late", animLate, Color(0xFFD97706), Modifier.weight(1f))
+                                    if (animCancelled > 0) {
+                                        StatCard("Cancelled", animCancelled, Color(0xFF64748B), Modifier.weight(1f))
+                                    } else {
+                                        StatCard("Late", animLate, Color(0xFFD97706), Modifier.weight(1f))
+                                    }
                                 }
 
                                 // Quick Actions
@@ -634,13 +640,33 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                                                 snackbarHostState.showSnackbar("Marked all ${students.size} students Present", duration = SnackbarDuration.Short)
                                             }
                                         },
-                                        modifier = Modifier.weight(1f),
+                                        modifier = Modifier.weight(1.2f),
                                         colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFFDCFCE7), contentColor = Color(0xFF15803D)),
                                         shape = RoundedCornerShape(10.dp)
                                     ) {
                                         Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(6.dp))
                                         Text("Mark All Present", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    }
+
+                                    FilledTonalButton(
+                                        onClick = {
+                                            students.forEach { st ->
+                                                localAttendance[st.id] = "CANCELLED"
+                                            }
+                                            hasUnsavedChanges = true
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar("Class marked as Cancelled (Tap Save to submit)", duration = SnackbarDuration.Short)
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFFF1F5F9), contentColor = Color(0xFF475569)),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Icon(Icons.Default.EventBusy, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Cancel Class", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                     }
                                 }
 
@@ -1546,12 +1572,14 @@ fun SwipeableAttendanceCard(
                 "P" -> Color(0xFFF0FDF4)
                 "A" -> Color(0xFFFEF2F2)
                 "L" -> Color(0xFFFFFBEB)
+                "CANCELLED", "C" -> Color(0xFFF1F5F9)
                 else -> Color.White
             }
             val borderColor = when (status) {
                 "P" -> Color(0xFF86EFAC)
                 "A" -> Color(0xFFFCA5A5)
                 "L" -> Color(0xFFFDE68A)
+                "CANCELLED", "C" -> Color(0xFFCBD5E1)
                 else -> Color(0xFFE2E8F0)
             }
 
@@ -1610,6 +1638,7 @@ fun SwipeableAttendanceCard(
                                 "P" -> "Present" to Color(0xFF16A34A)
                                 "A" -> "Absent" to Color(0xFFDC2626)
                                 "L" -> "Late" to Color(0xFFD97706)
+                                "CANCELLED", "C" -> "Cancelled" to Color(0xFF64748B)
                                 else -> "" to Color.Gray
                             }
                             Surface(

@@ -228,6 +228,39 @@ interface AppDao {
     fun getEnrollmentsForStudent(studentId: String): Flow<List<EnrollmentEntity>>
 
     // ==========================================
+    // Official Classes (ERP Feed from Teachers)
+    // ==========================================
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOfficialClasses(classes: List<OfficialClassEntity>)
+
+    @Query("SELECT * FROM official_classes WHERE isHidden = 0")
+    fun getActiveOfficialClasses(): Flow<List<OfficialClassEntity>>
+
+    @Query("SELECT * FROM official_classes WHERE isHidden = 1")
+    fun getHiddenOfficialClasses(): Flow<List<OfficialClassEntity>>
+
+    @Query("UPDATE official_classes SET isHidden = :hidden WHERE slotId = :slotId")
+    suspend fun setOfficialClassHidden(slotId: String, hidden: Boolean)
+
+    @Query("DELETE FROM official_classes WHERE slotId = :slotId")
+    suspend fun deleteOfficialClass(slotId: String)
+
+    @Query("DELETE FROM official_classes")
+    suspend fun wipeOfficialClasses()
+
+    // ==========================================
+    // Official Attendance
+    // ==========================================
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOfficialAttendance(records: List<OfficialAttendanceEntity>)
+
+    @Query("SELECT * FROM official_attendance")
+    fun getAllOfficialAttendance(): Flow<List<OfficialAttendanceEntity>>
+
+    @Query("DELETE FROM official_attendance")
+    suspend fun wipeOfficialAttendance()
+
+    // ==========================================
     // Database Wipe Operations
     // ==========================================
     @Query("DELETE FROM courses")
@@ -248,5 +281,7 @@ interface AppDao {
         wipeStudents()
         wipeScheduleSlots()
         wipeAttendance()
+        wipeOfficialClasses()
+        wipeOfficialAttendance()
     }
 }

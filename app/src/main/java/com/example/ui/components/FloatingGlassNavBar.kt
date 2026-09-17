@@ -68,9 +68,7 @@ fun FloatingGlassNavBar(
             listOf(
                 GlassTabItem(0, Icons.Default.Event, "Schedule", onClick = onNavigateSchedule),
                 GlassTabItem(1, Icons.Default.Assessment, "Report", onClick = { onNavigateReport?.invoke() ?: onNavigateAIImport() }),
-                GlassTabItem(2, Icons.Default.Add, "Add Class", isCenterAction = true, onClick = onNavigateAddClass),
-                GlassTabItem(3, Icons.Default.Create, "Classes", onClick = onNavigateManageClasses),
-                GlassTabItem(4, Icons.Default.Person, "Profile", onClick = onNavigateProfile)
+                GlassTabItem(2, Icons.Default.Person, "Profile", onClick = onNavigateProfile)
             )
         } else {
             listOf(

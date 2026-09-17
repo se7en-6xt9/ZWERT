@@ -83,6 +83,10 @@ object CsvStudentParser {
 
         var nameCol = overrideNameIndex ?: detectedHeaderIndices?.first ?: -1
         var rollCol = overrideRollIndex ?: detectedHeaderIndices?.second ?: -1
+        val emailCol = firstRow.indexOfFirst { col ->
+            val c = col.trim().lowercase()
+            c.contains("email") || c.contains("mail")
+        }
 
         val dataRows = if (isFirstRowHeader) allRows.drop(1) else allRows
         val headers = if (isFirstRowHeader) firstRow else List(firstRow.size) { "Column ${it + 1}" }
@@ -158,11 +162,13 @@ object CsvStudentParser {
             }
 
             val studentId = "student_${UUID.randomUUID().toString().replace("-", "").take(12)}"
+            val rawEmail = if (emailCol != -1) row.getOrNull(emailCol)?.trim()?.removeSurrounding("\"")?.takeIf { it.contains("@") } else null
             parsedStudents.add(
                 StudentImport(
                     id = studentId,
                     name = cleanStudentName(rawName),
-                    rollNumber = finalRoll
+                    rollNumber = finalRoll,
+                    email = rawEmail?.lowercase()
                 )
             )
         }

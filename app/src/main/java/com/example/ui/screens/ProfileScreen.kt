@@ -364,6 +364,108 @@ fun ProfileScreen(navController: NavController, viewModel: MainViewModel) {
                     }
                 }
             }
+
+            if (isStudent) {
+                Spacer(modifier = Modifier.height(20.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text("Personal Timetable", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Text("Add & manage your self-scheduled study classes", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Button(
+                                onClick = { navController.navigate("add_edit_batch") },
+                                modifier = Modifier.weight(1f).height(46.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Add Class", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                            OutlinedButton(
+                                onClick = { navController.navigate("manage_classes") },
+                                modifier = Modifier.weight(1f).height(46.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                            ) {
+                                Icon(Icons.Default.Create, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Edit Classes", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
+
+                // 2. Hidden Official Classes Section
+                val hiddenClasses by viewModel.hiddenOfficialClasses.collectAsState()
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.VisibilityOff, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text("Hidden Official Classes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Text("Restore any classes you previously hid", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        if (hiddenClasses.isEmpty()) {
+                            Text(
+                                "No hidden classes. When you tap 'Hide' on any faculty lecture in your official timetable, it appears here.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                modifier = Modifier.padding(vertical = 6.dp)
+                            )
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                hiddenClasses.forEach { hClass ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                                            .padding(10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(hClass.courseName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                            Text("${hClass.dayOfWeek} • ${hClass.startTime} - ${hClass.endTime} • ${hClass.facultyName}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        TextButton(
+                                            onClick = { viewModel.unhideOfficialClass(hClass.slotId) }
+                                        ) {
+                                            Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Unhide", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             
             Spacer(modifier = Modifier.height(28.dp))
             
