@@ -15,7 +15,8 @@ data class CourseUpload(
 data class StudentUpload(
     val id: String,
     val name: String,
-    val rollNumber: String
+    val rollNumber: String,
+    val email: String? = null
 )
 
 @JsonClass(generateAdapter = true)

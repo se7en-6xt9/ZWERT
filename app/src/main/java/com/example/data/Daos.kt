@@ -71,6 +71,9 @@ interface AppDao {
     @Query("DELETE FROM students WHERE courseId = :courseId")
     suspend fun deleteStudentsByCourseId(courseId: String)
 
+    @Query("SELECT * FROM students WHERE LOWER(TRIM(email)) = LOWER(TRIM(:email))")
+    suspend fun getStudentsByEmail(email: String): List<StudentEntity>
+
     // ==========================================
     // Schedule Slot Operations
     // ==========================================

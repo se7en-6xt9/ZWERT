@@ -8,6 +8,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -86,6 +87,9 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
     var showDiscardDialog by remember { mutableStateOf(false) }
     var showSubmitSuccessDialog by remember { mutableStateOf(false) }
 
+    var isCancelPanelExpanded by remember { mutableStateOf(false) }
+    var cancellationNoteInput by remember { mutableStateOf("") }
+
     // Load initial data
     LaunchedEffect(slotId) {
         slot = viewModel.getScheduleSlotById(slotId)
@@ -98,12 +102,16 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
 
     // Load existing saved records into local map on initial open
     val savedRecords by viewModel.getAttendanceForSession(currentDate, slotId).collectAsState(initial = emptyList())
-    LaunchedEffect(savedRecords) {
+    LaunchedEffect(savedRecords, course) {
         if (!initialLoaded && savedRecords.isNotEmpty()) {
             savedRecords.forEach { record ->
                 localAttendance[record.studentId] = record.status
             }
             initialLoaded = true
+        }
+        val note = viewModel.getCancellationNote(currentDate, slotId, course?.id ?: "")
+        if (note.isNotBlank() && cancellationNoteInput.isBlank()) {
+            cancellationNoteInput = note
         }
     }
 
@@ -349,18 +357,35 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                 val courseName = course?.name?.takeIf { it.isNotBlank() } ?: "Class Attendance"
                 val courseCode = course?.code?.takeIf { it.isNotBlank() }
                 val timeRange = "${slot?.startTime ?: ""} - ${slot?.endTime ?: ""}".trim()
+                val isDark = isSystemInDarkTheme()
                 val roomText = slot?.room ?: "Room"
                 val sectionText = if (!slot?.section.isNullOrBlank()) "Sec ${slot?.section}" else ""
+                val isSessionCancelled = cancelledCount > 0 || savedRecords.any {
+                    it.status.equals("CANCELLED", ignoreCase = true) || it.status.equals("C", ignoreCase = true)
+                }
 
                 if (attendanceMode == AttendanceMode.LIST || isSessionInfoExpanded) {
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 6.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isSessionCancelled) {
+                                if (isDark) Color(0xFF260D10) else Color(0xFFFEF2F2)
+                            } else {
+                                if (isDark) MaterialTheme.colorScheme.surface else Color.White
+                            }
+                        ),
                         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
                         shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+                        border = BorderStroke(
+                            if (isSessionCancelled) 1.2.dp else 1.dp,
+                            if (isSessionCancelled) {
+                                Color(0xFFEF4444).copy(alpha = if (isDark) 0.70f else 0.55f)
+                            } else {
+                                if (isDark) Color.White.copy(alpha = 0.12f) else Color(0xFFE2E8F0)
+                            }
+                        )
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -369,24 +394,40 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                                         text = courseName,
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF0F172A)
+                                        color = if (isSessionCancelled) {
+                                            if (isDark) Color(0xFFFCA5A5) else Color(0xFF7F1D1D)
+                                        } else {
+                                            if (isDark) Color.White else Color(0xFF0F172A)
+                                        }
                                     )
                                     if (sectionText.isNotBlank()) {
                                         Text(
                                             text = sectionText,
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = Color(0xFF64748B)
+                                            color = if (isSessionCancelled) {
+                                                if (isDark) Color(0xFFFECDD3).copy(alpha = 0.85f) else Color(0xFF991B1B)
+                                            } else {
+                                                if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+                                            }
                                         )
                                     }
                                 }
                                 if (!courseCode.isNullOrBlank()) {
                                     Surface(
-                                        color = Color(0xFFEDE9FE),
+                                        color = if (isSessionCancelled) {
+                                            if (isDark) Color(0xFF3F1115) else Color(0xFFFEE2E2)
+                                        } else {
+                                            if (isDark) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color(0xFFEDE9FE)
+                                        },
                                         shape = RoundedCornerShape(8.dp)
                                     ) {
                                         Text(
                                             text = courseCode,
-                                            color = Color(0xFF6D28D9),
+                                            color = if (isSessionCancelled) {
+                                                if (isDark) Color(0xFFFCA5A5) else Color(0xFFDC2626)
+                                            } else {
+                                                if (isDark) MaterialTheme.colorScheme.primary else Color(0xFF6D28D9)
+                                            },
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.Bold
@@ -401,7 +442,11 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                                         Icon(
                                             Icons.Default.ExpandLess,
                                             contentDescription = "Collapse info",
-                                            tint = Color(0xFF64748B)
+                                            tint = if (isSessionCancelled) {
+                                                if (isDark) Color(0xFFFCA5A5) else Color(0xFFDC2626)
+                                            } else {
+                                                if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+                                            }
                                         )
                                     }
                                 }
@@ -413,6 +458,260 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                                 InfoItem(icon = Icons.Default.Schedule, text = timeRange)
                                 InfoItem(icon = Icons.Default.LocationOn, text = roomText)
                             }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            HorizontalDivider(
+                                color = if (isSessionCancelled) {
+                                    Color(0xFFEF4444).copy(alpha = if (isDark) 0.35f else 0.5f)
+                                } else {
+                                    if (isDark) Color.White.copy(alpha = 0.1f) else Color(0xFFE2E8F0)
+                                },
+                                thickness = 0.8.dp
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // Capsule Button for Class Cancellation
+                            Surface(
+                                shape = CircleShape,
+                                color = if (isSessionCancelled) {
+                                    if (isDark) Color(0xFF3F1115) else Color(0xFFFEE2E2)
+                                } else {
+                                    if (isDark) Color(0xFF1E293B) else Color(0xFFF1F5F9)
+                                },
+                                border = BorderStroke(
+                                    1.2.dp,
+                                    if (isSessionCancelled) {
+                                        Color(0xFFEF4444)
+                                    } else {
+                                        if (isDark) Color.White.copy(alpha = 0.2f) else Color(0xFFCBD5E1)
+                                    }
+                                ),
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        isCancelPanelExpanded = !isCancelPanelExpanded
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.EventBusy,
+                                        contentDescription = null,
+                                        tint = if (isSessionCancelled) Color(0xFFDC2626) else Color(0xFF64748B),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (isSessionCancelled) {
+                                            if (cancellationNoteInput.isNotBlank()) "Class Cancelled: \"${cancellationNoteInput.take(18)}...\"" else "Class Cancelled"
+                                        } else {
+                                            "Cancel Class"
+                                        },
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSessionCancelled) Color(0xFFDC2626) else Color(0xFF475569)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Icon(
+                                        imageVector = if (isCancelPanelExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = null,
+                                        tint = if (isSessionCancelled) Color(0xFFDC2626) else Color(0xFF64748B),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+
+                            // Expandable Cancellation & Note Panel
+                            AnimatedVisibility(
+                                visible = isCancelPanelExpanded,
+                                enter = expandVertically() + fadeIn(),
+                                exit = shrinkVertically() + fadeOut()
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 10.dp)
+                                        .background(
+                                            if (isDark) Color(0xFF351014) else Color(0xFFFEF2F2),
+                                            RoundedCornerShape(14.dp)
+                                        )
+                                        .border(
+                                            1.dp,
+                                            if (isDark) Color(0xFFEF4444).copy(alpha = 0.6f) else Color(0xFFFCA5A5),
+                                            RoundedCornerShape(14.dp)
+                                        )
+                                        .padding(12.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                Icons.Default.EventBusy,
+                                                contentDescription = null,
+                                                tint = Color(0xFFEF4444),
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = if (isSessionCancelled) "Class Cancellation Details" else "Cancel Class Session",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isDark) Color(0xFFFCA5A5) else Color(0xFF991B1B)
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = { isCancelPanelExpanded = false },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Close,
+                                                contentDescription = "Close",
+                                                tint = if (isDark) Color(0xFFFCA5A5) else Color(0xFF991B1B),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Add a cancellation note for students. The class card will turn red and show your note to all enrolled students.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (isDark) Color(0xFFFECDD3).copy(alpha = 0.85f) else Color(0xFF7F1D1D)
+                                    )
+
+                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                    OutlinedTextField(
+                                        value = cancellationNoteInput,
+                                        onValueChange = { cancellationNoteInput = it },
+                                        placeholder = {
+                                            Text(
+                                                "e.g., Faculty attending conference, class rescheduled...",
+                                                color = if (isDark) Color(0xFF94A3B8) else Color(0xFF94A3B8),
+                                                fontSize = 12.5.sp
+                                            )
+                                        },
+                                        label = { Text("Cancellation Note for Students", fontSize = 12.sp) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = Color(0xFFEF4444),
+                                            unfocusedBorderColor = if (isDark) Color(0xFFEF4444).copy(alpha = 0.5f) else Color(0xFFFCA5A5),
+                                            focusedLabelColor = if (isDark) Color(0xFFFCA5A5) else Color(0xFFDC2626),
+                                            unfocusedLabelColor = if (isDark) Color(0xFFFECDD3) else Color(0xFF7F1D1D),
+                                            focusedContainerColor = if (isDark) Color(0xFF260D10) else Color.White,
+                                            unfocusedContainerColor = if (isDark) Color(0xFF260D10) else Color.White
+                                        ),
+                                        singleLine = false,
+                                        maxLines = 3
+                                    )
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (isSessionCancelled) {
+                                            TextButton(
+                                                onClick = {
+                                                    if (slot != null && course != null) {
+                                                        viewModel.uncancelClassSession(
+                                                            date = currentDate,
+                                                            slotId = slot!!.id,
+                                                            courseId = course!!.id,
+                                                            onSuccess = {
+                                                                students.forEach { st ->
+                                                                    localAttendance.remove(st.id)
+                                                                }
+                                                                cancellationNoteInput = ""
+                                                                hasUnsavedChanges = false
+                                                                isCancelPanelExpanded = false
+                                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                                coroutineScope.launch {
+                                                                    snackbarHostState.showSnackbar("Class un-cancelled and restored to active")
+                                                                }
+                                                            }
+                                                        )
+                                                    }
+                                                }
+                                            ) {
+                                                Text("Restore Class", color = Color(0xFF64748B), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            }
+
+                                            Spacer(modifier = Modifier.width(8.dp))
+
+                                            Button(
+                                                onClick = {
+                                                    if (slot != null && course != null) {
+                                                        viewModel.cancelClassSession(
+                                                            date = currentDate,
+                                                            slotId = slot!!.id,
+                                                            courseId = course!!.id,
+                                                            note = cancellationNoteInput,
+                                                            onSuccess = {
+                                                                isCancelPanelExpanded = false
+                                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                coroutineScope.launch {
+                                                                    snackbarHostState.showSnackbar("Cancellation note saved and visible to students ✓")
+                                                                }
+                                                            }
+                                                        )
+                                                    }
+                                                },
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                                                shape = RoundedCornerShape(10.dp)
+                                            ) {
+                                                Text("Update Note", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            }
+                                        } else {
+                                            TextButton(
+                                                onClick = { isCancelPanelExpanded = false }
+                                            ) {
+                                                Text("Keep Class", color = Color(0xFF64748B), fontSize = 13.sp)
+                                            }
+
+                                            Spacer(modifier = Modifier.width(8.dp))
+
+                                            Button(
+                                                onClick = {
+                                                    if (slot != null && course != null) {
+                                                        students.forEach { st ->
+                                                            localAttendance[st.id] = "CANCELLED"
+                                                        }
+                                                        hasUnsavedChanges = false
+                                                        viewModel.cancelClassSession(
+                                                            date = currentDate,
+                                                            slotId = slot!!.id,
+                                                            courseId = course!!.id,
+                                                            note = cancellationNoteInput,
+                                                            onSuccess = {
+                                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                                isCancelPanelExpanded = false
+                                                                coroutineScope.launch {
+                                                                    snackbarHostState.showSnackbar("Class cancelled! Red card & note visible to students.")
+                                                                }
+                                                            }
+                                                        )
+                                                    }
+                                                },
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                                                shape = RoundedCornerShape(10.dp)
+                                            ) {
+                                                Icon(Icons.Default.EventBusy, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text("Confirm Cancel Class", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 } else {
@@ -423,8 +722,19 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                             .padding(horizontal = 16.dp, vertical = 4.dp)
                             .clickable { isSessionInfoExpanded = true },
                         shape = RoundedCornerShape(12.dp),
-                        color = Color.White,
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        color = if (isSessionCancelled) {
+                            if (isDark) Color(0xFF260D10) else Color(0xFFFEF2F2)
+                        } else {
+                            if (isDark) MaterialTheme.colorScheme.surface else Color.White
+                        },
+                        border = BorderStroke(
+                            if (isSessionCancelled) 1.2.dp else 1.dp,
+                            if (isSessionCancelled) {
+                                Color(0xFFEF4444).copy(alpha = if (isDark) 0.70f else 0.55f)
+                            } else {
+                                if (isDark) Color.White.copy(alpha = 0.12f) else Color(0xFFE2E8F0)
+                            }
+                        ),
                         shadowElevation = 0.5.dp
                     ) {
                         Row(
@@ -438,14 +748,29 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.weight(1f)
                             ) {
+                                if (isSessionCancelled) {
+                                    Surface(
+                                        color = if (isDark) Color(0xFF3F1115) else Color(0xFFFEE2E2),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "CANCELLED",
+                                            color = if (isDark) Color(0xFFFCA5A5) else Color(0xFFDC2626),
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                }
                                 if (!courseCode.isNullOrBlank()) {
                                     Surface(
-                                        color = Color(0xFFEDE9FE),
+                                        color = if (isDark) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color(0xFFEDE9FE),
                                         shape = RoundedCornerShape(6.dp)
                                     ) {
                                         Text(
                                             text = courseCode,
-                                            color = Color(0xFF6D28D9),
+                                            color = if (isDark) MaterialTheme.colorScheme.primary else Color(0xFF6D28D9),
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.ExtraBold,
                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -457,7 +782,11 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                                     text = courseName,
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF0F172A),
+                                    color = if (isSessionCancelled) {
+                                        if (isDark) Color(0xFFFCA5A5) else Color(0xFF7F1D1D)
+                                    } else {
+                                        if (isDark) Color.White else Color(0xFF0F172A)
+                                    },
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false)
@@ -482,7 +811,7 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                                 Icon(
                                     Icons.Default.ExpandMore,
                                     contentDescription = "Expand info",
-                                    tint = Color(0xFF94A3B8),
+                                    tint = if (isSessionCancelled) Color(0xFFDC2626) else Color(0xFF94A3B8),
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -640,33 +969,13 @@ fun LectureViewScreen(navController: NavController, viewModel: MainViewModel, sl
                                                 snackbarHostState.showSnackbar("Marked all ${students.size} students Present", duration = SnackbarDuration.Short)
                                             }
                                         },
-                                        modifier = Modifier.weight(1.2f),
+                                        modifier = Modifier.fillMaxWidth(),
                                         colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFFDCFCE7), contentColor = Color(0xFF15803D)),
-                                        shape = RoundedCornerShape(10.dp)
+                                        shape = RoundedCornerShape(12.dp)
                                     ) {
                                         Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(6.dp))
                                         Text("Mark All Present", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                    }
-
-                                    FilledTonalButton(
-                                        onClick = {
-                                            students.forEach { st ->
-                                                localAttendance[st.id] = "CANCELLED"
-                                            }
-                                            hasUnsavedChanges = true
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            coroutineScope.launch {
-                                                snackbarHostState.showSnackbar("Class marked as Cancelled (Tap Save to submit)", duration = SnackbarDuration.Short)
-                                            }
-                                        },
-                                        modifier = Modifier.weight(1f),
-                                        colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFFF1F5F9), contentColor = Color(0xFF475569)),
-                                        shape = RoundedCornerShape(10.dp)
-                                    ) {
-                                        Icon(Icons.Default.EventBusy, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Cancel Class", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                     }
                                 }
 

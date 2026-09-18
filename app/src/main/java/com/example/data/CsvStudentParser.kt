@@ -14,6 +14,7 @@ data class CsvParseResult(
     val headers: List<String>,
     val nameColumnIndex: Int,
     val rollColumnIndex: Int,
+    val emailColumnIndex: Int = -1,
     val delimiter: Char,
     val rawPreviewRows: List<List<String>>
 )
@@ -40,6 +41,7 @@ object CsvStudentParser {
         csvContent: String,
         overrideNameIndex: Int? = null,
         overrideRollIndex: Int? = null,
+        overrideEmailIndex: Int? = null,
         overrideHasHeader: Boolean? = null
     ): CsvParseResult {
         if (csvContent.isBlank()) {
@@ -52,6 +54,7 @@ object CsvStudentParser {
                 headers = emptyList(),
                 nameColumnIndex = -1,
                 rollColumnIndex = -1,
+                emailColumnIndex = -1,
                 delimiter = ',',
                 rawPreviewRows = emptyList()
             )
@@ -71,6 +74,7 @@ object CsvStudentParser {
                 headers = emptyList(),
                 nameColumnIndex = -1,
                 rollColumnIndex = -1,
+                emailColumnIndex = -1,
                 delimiter = delimiter,
                 rawPreviewRows = emptyList()
             )
@@ -83,10 +87,12 @@ object CsvStudentParser {
 
         var nameCol = overrideNameIndex ?: detectedHeaderIndices?.first ?: -1
         var rollCol = overrideRollIndex ?: detectedHeaderIndices?.second ?: -1
-        val emailCol = firstRow.indexOfFirst { col ->
-            val c = col.trim().lowercase()
-            c.contains("email") || c.contains("mail")
-        }
+        var emailCol = overrideEmailIndex ?: if (isFirstRowHeader) {
+            firstRow.indexOfFirst { col ->
+                val c = col.trim().lowercase()
+                c.contains("email") || c.contains("mail")
+            }
+        } else -1
 
         val dataRows = if (isFirstRowHeader) allRows.drop(1) else allRows
         val headers = if (isFirstRowHeader) firstRow else List(firstRow.size) { "Column ${it + 1}" }
@@ -125,6 +131,27 @@ object CsvStudentParser {
             nameCol = if (rollCol == 0) 1 else 0
         } else if (rollCol == -1) {
             rollCol = if (nameCol == 0) 1 else 0
+        }
+
+        // If emailCol still not determined, auto-detect from data rows
+        if (emailCol == -1) {
+            val maxCols = dataRows.maxOfOrNull { it.size } ?: 0
+            var bestEmailCol = -1
+            var bestCount = 0
+            for (c in 0 until maxCols) {
+                if (c == nameCol || c == rollCol) continue
+                val count = dataRows.take(15).count { row ->
+                    val v = row.getOrNull(c)?.trim() ?: ""
+                    v.contains("@") && v.contains(".")
+                }
+                if (count > bestCount) {
+                    bestCount = count
+                    bestEmailCol = c
+                }
+            }
+            if (bestCount > 0) {
+                emailCol = bestEmailCol
+            }
         }
 
         val parsedStudents = mutableListOf<StudentImport>()
@@ -182,6 +209,7 @@ object CsvStudentParser {
             headers = headers,
             nameColumnIndex = nameCol,
             rollColumnIndex = rollCol,
+            emailColumnIndex = emailCol,
             delimiter = delimiter,
             rawPreviewRows = allRows.take(6)
         )
@@ -194,11 +222,12 @@ object CsvStudentParser {
         inputStream: InputStream,
         overrideNameIndex: Int? = null,
         overrideRollIndex: Int? = null,
+        overrideEmailIndex: Int? = null,
         overrideHasHeader: Boolean? = null
     ): CsvParseResult {
         val reader = BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8))
         val text = reader.readText()
-        return parseCsv(text, overrideNameIndex, overrideRollIndex, overrideHasHeader)
+        return parseCsv(text, overrideNameIndex, overrideRollIndex, overrideEmailIndex, overrideHasHeader)
     }
 
     private fun detectDelimiter(content: String): Char {
@@ -378,30 +407,25 @@ object CsvStudentParser {
     /**
      * Realistic sample CSV data for faculty to test or load immediately with one tap.
      */
-    fun getSampleCsvString(): String = """Roll Number, Student Name, Department
-24BCS001, Aarav Sharma, Computer Science
-24BCS002, Ananya Patel, Computer Science
-24BCS003, Rohan Mehta, Computer Science
-24BCS004, Ishaan Verma, Computer Science
-24BCS005, Diya Iyer, Computer Science
-24BCS006, Siddharth Nair, Computer Science
-24BCS007, Sneha Kulkarni, Computer Science
-24BCS008, Aditya Rao, Computer Science
-24BCS009, Kavya Deshmukh, Computer Science
-24BCS010, Kabir Sen, Computer Science
-24BCS011, Riya Mukherjee, Computer Science
-24BCS012, Tanmay Joshi, Computer Science
-24BCS013, Meera Nambiar, Computer Science
-24BCS014, Arjun Kapoor, Computer Science
-24BCS015, Pooja Hegde, Computer Science
-24BCS016, Nikhil Reddy, Computer Science
-24BCS017, Shruti Bhat, Computer Science
-24BCS018, Varun Chauhan, Computer Science
-24BCS019, Aniket Gupta, Computer Science
-24BCS020, Tara Pillai, Computer Science
-24BCS021, Devika Menon, Computer Science
-24BCS022, Gaurav Malhotra, Computer Science
-24BCS023, Ishita Jain, Computer Science
-24BCS024, Mayank Bansal, Computer Science
-24BCS025, Kritika Rawat, Computer Science"""
+    fun getSampleCsvString(): String = """Roll Number, Student Name, Student Email
+24BCS001, Aman Kumar, student.demo@campus.edu
+24BCS002, Aarav Sharma, aarav.sharma@campus.edu
+24BCS003, Ananya Patel, ananya.patel@campus.edu
+24BCS004, Rohan Mehta, rohan.mehta@campus.edu
+24BCS005, Ishaan Verma, ishaan.verma@campus.edu
+24BCS006, Diya Iyer, diya.iyer@campus.edu
+24BCS007, Sneha Kulkarni, sneha.k@campus.edu
+24BCS008, Aditya Rao, aditya.rao@campus.edu
+24BCS009, Kavya Deshmukh, kavya.d@campus.edu
+24BCS010, Kabir Sen, kabir.sen@campus.edu
+24BCS011, Riya Mukherjee, riya.m@campus.edu
+24BCS012, Tanmay Joshi, tanmay.j@campus.edu
+24BCS013, Meera Nambiar, meera.n@campus.edu
+24BCS014, Arjun Kapoor, arjun.k@campus.edu
+24BCS015, Pooja Hegde, pooja.h@campus.edu
+24BCS016, Nikhil Reddy, nikhil.r@campus.edu
+24BCS017, Shruti Bhat, shruti.b@campus.edu
+24BCS018, Varun Chauhan, varun.c@campus.edu
+24BCS019, Aniket Gupta, aniket.g@campus.edu
+24BCS020, Tara Pillai, tara.p@campus.edu"""
 }

@@ -113,6 +113,7 @@ fun BulkCsvImportDialog(
     // Column mapping overrides
     var overrideNameCol by remember { mutableStateOf<Int?>(null) }
     var overrideRollCol by remember { mutableStateOf<Int?>(null) }
+    var overrideEmailCol by remember { mutableStateOf<Int?>(null) }
 
     // In-flight progress
     var isImporting by remember { mutableStateOf(false) }
@@ -122,7 +123,12 @@ fun BulkCsvImportDialog(
     val emeraldGreen = Color(0xFF10B981)
     val amberOrange = Color(0xFFF59E0B)
 
-    fun runParser(content: String, nameCol: Int? = overrideNameCol, rollCol: Int? = overrideRollCol) {
+    fun runParser(
+        content: String,
+        nameCol: Int? = overrideNameCol,
+        rollCol: Int? = overrideRollCol,
+        emailCol: Int? = overrideEmailCol
+    ) {
         if (content.isBlank()) {
             parseResult = null
             parsedStudentsList = emptyList()
@@ -131,7 +137,8 @@ fun BulkCsvImportDialog(
         val result = CsvStudentParser.parseCsv(
             csvContent = content,
             overrideNameIndex = nameCol,
-            overrideRollIndex = rollCol
+            overrideRollIndex = rollCol,
+            overrideEmailIndex = emailCol
         )
         parseResult = result
         parsedStudentsList = result.students
@@ -160,6 +167,7 @@ fun BulkCsvImportDialog(
                     rawCsvText = text
                     overrideNameCol = null
                     overrideRollCol = null
+                    overrideEmailCol = null
                     runParser(text)
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     Toast.makeText(context, "Loaded $name: ${parseResult?.validCount ?: 0} students", Toast.LENGTH_SHORT).show()
@@ -501,9 +509,10 @@ fun BulkCsvImportDialog(
                                             inputTab = 1
                                             overrideNameCol = null
                                             overrideRollCol = null
+                                            overrideEmailCol = null
                                             runParser(sample)
                                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            Toast.makeText(context, "Loaded 25 sample university students!", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "Loaded sample class with sync emails!", Toast.LENGTH_SHORT).show()
                                         },
                                         label = { Text("Try Sample CSV", fontSize = 12.sp) },
                                         leadingIcon = { Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(15.dp), tint = amberOrange) }
@@ -663,16 +672,17 @@ fun BulkCsvImportDialog(
                                             color = emeraldGreen,
                                             modifier = Modifier.weight(1f)
                                         )
+                                        val emailCount = res.students.count { !it.email.isNullOrBlank() }
+                                        MetricBadge(
+                                            label = "Live Sync Emails",
+                                            value = "$emailCount",
+                                            color = accentIndigo,
+                                            modifier = Modifier.weight(1f)
+                                        )
                                         MetricBadge(
                                             label = "Duplicates",
                                             value = "${res.duplicateCount}",
                                             color = if (res.duplicateCount > 0) amberOrange else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        MetricBadge(
-                                            label = "Errors",
-                                            value = "${res.errorRows.size}",
-                                            color = if (res.errorRows.isNotEmpty()) MaterialTheme.colorScheme.error else emeraldGreen,
                                             modifier = Modifier.weight(1f)
                                         )
                                     }
@@ -689,7 +699,7 @@ fun BulkCsvImportDialog(
                                             Text("Detected Columns (tap to adjust):", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                                             ) {
                                                 // Name Column mapping dropdown
                                                 Column(modifier = Modifier.weight(1f)) {
@@ -699,14 +709,15 @@ fun BulkCsvImportDialog(
                                                         onClick = { nameExpanded = true },
                                                         modifier = Modifier.fillMaxWidth(),
                                                         shape = RoundedCornerShape(10.dp),
-                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
                                                     ) {
                                                         Text(
                                                             res.headers.getOrNull(res.nameColumnIndex) ?: "Col ${res.nameColumnIndex + 1}",
                                                             maxLines = 1,
-                                                            overflow = TextOverflow.Ellipsis
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            fontSize = 12.sp
                                                         )
-                                                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp))
                                                     }
                                                     DropdownMenu(expanded = nameExpanded, onDismissRequest = { nameExpanded = false }) {
                                                         res.headers.forEachIndexed { i, h ->
@@ -730,14 +741,15 @@ fun BulkCsvImportDialog(
                                                         onClick = { rollExpanded = true },
                                                         modifier = Modifier.fillMaxWidth(),
                                                         shape = RoundedCornerShape(10.dp),
-                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
                                                     ) {
                                                         Text(
                                                             res.headers.getOrNull(res.rollColumnIndex) ?: "Col ${res.rollColumnIndex + 1}",
                                                             maxLines = 1,
-                                                            overflow = TextOverflow.Ellipsis
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            fontSize = 12.sp
                                                         )
-                                                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp))
                                                     }
                                                     DropdownMenu(expanded = rollExpanded, onDismissRequest = { rollExpanded = false }) {
                                                         res.headers.forEachIndexed { i, h ->
@@ -747,6 +759,48 @@ fun BulkCsvImportDialog(
                                                                     overrideRollCol = i
                                                                     runParser(rawCsvText, rollCol = i)
                                                                     rollExpanded = false
+                                                                }
+                                                            )
+                                                        }
+                                                    }
+                                                }
+
+                                                // Email Column mapping dropdown
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text("Email (Sync):", style = MaterialTheme.typography.labelSmall)
+                                                    var emailExpanded by remember { mutableStateOf(false) }
+                                                    OutlinedButton(
+                                                        onClick = { emailExpanded = true },
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        shape = RoundedCornerShape(10.dp),
+                                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
+                                                    ) {
+                                                        Text(
+                                                            if (res.emailColumnIndex >= 0) {
+                                                                res.headers.getOrNull(res.emailColumnIndex) ?: "Col ${res.emailColumnIndex + 1}"
+                                                            } else "None",
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            fontSize = 12.sp
+                                                        )
+                                                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp))
+                                                    }
+                                                    DropdownMenu(expanded = emailExpanded, onDismissRequest = { emailExpanded = false }) {
+                                                        DropdownMenuItem(
+                                                            text = { Text("None (Skip Email)") },
+                                                            onClick = {
+                                                                overrideEmailCol = -1
+                                                                runParser(rawCsvText, emailCol = -1)
+                                                                emailExpanded = false
+                                                            }
+                                                        )
+                                                        res.headers.forEachIndexed { i, h ->
+                                                            DropdownMenuItem(
+                                                                text = { Text("Col ${i + 1}: $h") },
+                                                                onClick = {
+                                                                    overrideEmailCol = i
+                                                                    runParser(rawCsvText, emailCol = i)
+                                                                    emailExpanded = false
                                                                 }
                                                             )
                                                         }
@@ -900,7 +954,7 @@ private fun StudentPreviewItem(
             }
 
             // Student Info
-            Column(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     name,
                     fontWeight = FontWeight.SemiBold,
@@ -908,11 +962,36 @@ private fun StudentPreviewItem(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    roll,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        roll,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (!student.email.isNullOrBlank()) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Email,
+                                contentDescription = null,
+                                modifier = Modifier.size(12.dp),
+                                tint = Color(0xFF6366F1)
+                            )
+                            Text(
+                                student.email,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF6366F1),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
             }
 
             // Delete action

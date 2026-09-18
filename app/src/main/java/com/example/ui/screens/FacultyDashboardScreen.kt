@@ -7,6 +7,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -267,19 +268,15 @@ fun DashboardContent(
                                                 it.status.equals("CANCELLED", ignoreCase = true) || it.status.equals("C", ignoreCase = true)
                                             }
 
+                                            val cancelNote = viewModel.getCancellationNote(dateStr, slot.id, slot.courseId)
+
                                             GlassLectureCard(
                                                 slot = slot,
                                                 course = courseMap[slot.courseId],
                                                 isLive = isLive,
                                                 timeHint = timeHint,
                                                 isCancelled = isCancelled,
-                                                onCancelClass = {
-                                                    viewModel.cancelClassSession(
-                                                        date = dateStr,
-                                                        slotId = slot.id,
-                                                        courseId = slot.courseId
-                                                    )
-                                                },
+                                                cancelNote = cancelNote,
                                                 onUncancelClass = {
                                                     viewModel.uncancelClassSession(
                                                         date = dateStr,
@@ -792,20 +789,34 @@ fun GlassLectureCard(
     isLive: Boolean = false,
     timeHint: String? = null,
     isCancelled: Boolean = false,
-    onCancelClass: () -> Unit = {},
+    cancelNote: String = "",
     onUncancelClass: () -> Unit = {},
     onClick: () -> Unit
 ) {
+    val isDarkTheme = isSystemInDarkTheme()
     val subjectColors = listOf(Color(0xFFE57373), Color(0xFF81C784), Color(0xFF64B5F6), Color(0xFFFFD54F), Color(0xFFBA68C8))
     
     val liveGreen = Color(0xFF4CAF50)
-    val targetBarColor = if (isLive) liveGreen else subjectColors[abs(slot.courseId.hashCode()) % subjectColors.size]
+    val cancelledRed = Color(0xFFEF4444)
+    val targetBarColor = if (isCancelled) cancelledRed else if (isLive) liveGreen else subjectColors[abs(slot.courseId.hashCode()) % subjectColors.size]
     val barColor by animateColorAsState(targetBarColor, tween(500), label = "barColor")
     
-    val targetBgColor = if (isLive) liveGreen.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface
+    val targetBgColor = if (isCancelled) {
+        if (isDarkTheme) Color(0xFF260D10) else Color(0xFFFEF2F2)
+    } else if (isLive) {
+        liveGreen.copy(alpha = 0.08f)
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
     val bgColor by animateColorAsState(targetBgColor, tween(500), label = "bgColor")
     
-    val targetBorderColor = if (isLive) liveGreen.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.18f)
+    val targetBorderColor = if (isCancelled) {
+        Color(0xFFEF4444).copy(alpha = if (isDarkTheme) 0.70f else 0.55f)
+    } else if (isLive) {
+        liveGreen.copy(alpha = 0.35f)
+    } else {
+        Color.White.copy(alpha = 0.18f)
+    }
     val borderColor by animateColorAsState(targetBorderColor, tween(500), label = "borderColor")
 
     Card(
@@ -814,14 +825,14 @@ fun GlassLectureCard(
             .shadow(
                 elevation = 6.dp,
                 shape = RoundedCornerShape(24.dp),
-                spotColor = if (isLive) liveGreen.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.16f),
+                spotColor = if (isCancelled) Color(0xFFEF4444).copy(alpha = 0.35f) else if (isLive) liveGreen.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.16f),
                 ambientColor = Color.Black.copy(alpha = 0.08f)
             )
             .bounceClick(scaleDown = 0.97f, onClick = onClick),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = bgColor),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = BorderStroke(1.dp, borderColor)
+        border = BorderStroke(if (isCancelled) 1.2.dp else 1.dp, borderColor)
     ) {
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
             Box(
@@ -852,7 +863,11 @@ fun GlassLectureCard(
                             text = subjectText,
                             style = MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp),
                             fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            color = if (isCancelled) {
+                                if (isDarkTheme) Color(0xFFFCA5A5) else Color(0xFF7F1D1D)
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -861,7 +876,11 @@ fun GlassLectureCard(
                             Text(
                                 text = fullSubjectName,
                                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (isCancelled) {
+                                    if (isDarkTheme) Color(0xFFFECDD3).copy(alpha = 0.85f) else Color(0xFF991B1B)
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -872,19 +891,32 @@ fun GlassLectureCard(
                     Column(horizontalAlignment = Alignment.End) {
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = if (isLive) liveGreen else MaterialTheme.colorScheme.primaryContainer,
+                            color = if (isCancelled) {
+                                if (isDarkTheme) Color(0xFF3F1115) else Color(0xFFFEE2E2)
+                            } else if (isLive) {
+                                liveGreen
+                            } else {
+                                MaterialTheme.colorScheme.primaryContainer
+                            },
+                            border = if (isCancelled) BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.5f)) else null,
                             modifier = Modifier.bounceClick(scaleDown = 0.95f) {}
                         ) {
                             Text(
                                 text = "${slot.startTime} - ${slot.endTime}",
                                 style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
                                 fontWeight = FontWeight.Bold,
-                                color = if (isLive) Color.White else MaterialTheme.colorScheme.onPrimaryContainer,
+                                color = if (isCancelled) {
+                                    if (isDarkTheme) Color(0xFFFCA5A5) else Color(0xFFDC2626)
+                                } else if (isLive) {
+                                    Color.White
+                                } else {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                },
                                 modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
                             )
                         }
 
-                        if (timeHint != null) {
+                        if (timeHint != null && !isCancelled) {
                             Spacer(modifier = Modifier.height(5.dp))
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
@@ -958,23 +990,39 @@ fun GlassLectureCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.LocationOn, "Location", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                        Icon(
+                            Icons.Default.LocationOn, "Location", 
+                            modifier = Modifier.size(16.dp), 
+                            tint = if (isCancelled) Color(0xFFEF4444).copy(alpha = 0.85f) else MaterialTheme.colorScheme.primary
+                        )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = slot.room,
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (isCancelled) {
+                                if (isDarkTheme) Color(0xFFCBD5E1) else Color(0xFF475569)
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                             fontWeight = FontWeight.SemiBold
                         )
                     }
                     
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.PeopleAlt, "Students", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
+                        Icon(
+                            Icons.Default.PeopleAlt, "Students", 
+                            modifier = Modifier.size(16.dp), 
+                            tint = if (isCancelled) Color(0xFFEF4444).copy(alpha = 0.85f) else MaterialTheme.colorScheme.secondary
+                        )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = "Sec ${slot.section}",
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (isCancelled) {
+                                if (isDarkTheme) Color(0xFFCBD5E1) else Color(0xFF475569)
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                             fontWeight = FontWeight.SemiBold
                         )
                     }
@@ -985,97 +1033,105 @@ fun GlassLectureCard(
                 if (isCancelled) {
                     Surface(
                         shape = RoundedCornerShape(14.dp),
-                        color = Color(0xFF64748B).copy(alpha = 0.12f),
-                        border = BorderStroke(1.dp, Color(0xFF64748B).copy(alpha = 0.35f)),
+                        color = if (isDarkTheme) Color(0xFF351014) else Color(0xFFEF4444).copy(alpha = 0.10f),
+                        border = BorderStroke(1.2.dp, Color(0xFFEF4444).copy(alpha = if (isDarkTheme) 0.65f else 0.40f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.EventBusy,
-                                    contentDescription = null,
-                                    tint = Color(0xFF64748B),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    "CLASS CANCELLED",
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color(0xFF64748B),
-                                    style = MaterialTheme.typography.labelMedium
-                                )
-                            }
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(
-                                    onClick = onUncancelClass,
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.EventBusy,
+                                        contentDescription = null,
+                                        tint = Color(0xFFEF4444),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        "Undo",
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Bold,
-                                        style = MaterialTheme.typography.labelSmall
+                                        "CLASS CANCELLED",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = if (isDarkTheme) Color(0xFFFCA5A5) else Color(0xFFDC2626),
+                                        style = MaterialTheme.typography.labelMedium
                                     )
                                 }
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Button(
-                                    onClick = onClick,
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    TextButton(
+                                        onClick = onUncancelClass,
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            "Undo",
+                                            color = if (isDarkTheme) Color(0xFFFCA5A5) else Color(0xFFDC2626),
+                                            fontWeight = FontWeight.Bold,
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Button(
+                                        onClick = onClick,
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            "View Session",
+                                            fontWeight = FontWeight.Bold,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color.White
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (cancelNote.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isDarkTheme) Color(0xFF1E080A) else Color.White.copy(alpha = 0.85f),
+                                    border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.35f)),
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text(
-                                        "Mark Attendance",
-                                        fontWeight = FontWeight.Bold,
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Info,
+                                            contentDescription = null,
+                                            tint = Color(0xFFEF4444),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Note to Students: $cancelNote",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (isDarkTheme) Color(0xFFFECDD3) else Color(0xFF7F1D1D),
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Button(
+                        onClick = onClick,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        )
                     ) {
-                        Button(
-                            onClick = onClick,
-                            modifier = Modifier
-                                .weight(1.3f)
-                                .height(44.dp),
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary
-                            )
-                        ) {
-                            Icon(Icons.Default.FactCheck, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Mark Attendance", maxLines = 1, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
-                        }
-
-                        OutlinedButton(
-                            onClick = onCancelClass,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp),
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = Color(0xFF64748B)
-                            ),
-                            border = BorderStroke(1.2.dp, Color(0xFF64748B).copy(alpha = 0.45f))
-                        ) {
-                            Icon(Icons.Default.EventBusy, contentDescription = null, modifier = Modifier.size(15.dp), tint = Color(0xFF64748B))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Cancel Class", maxLines = 1, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
-                        }
+                        Icon(Icons.Default.FactCheck, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Mark Attendance", maxLines = 1, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }

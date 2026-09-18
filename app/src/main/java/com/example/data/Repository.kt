@@ -9,7 +9,7 @@ class Repository(val dao: AppDao) {
             val courses = data.courses.map { CourseEntity(it.id, it.name, it.code, it.credits) }
             dao.insertCourses(courses)
             val students = data.courses.flatMap { course ->
-                course.students.map { student -> StudentEntity(student.id, student.name, student.rollNumber, course.id, email = "") }
+                course.students.map { student -> StudentEntity(student.id, student.name, student.rollNumber, course.id, email = student.email ?: "") }
             }
             dao.insertStudents(students)
             val slots = data.weeklySchedule.map { slot ->
@@ -39,7 +39,6 @@ class Repository(val dao: AppDao) {
                     newStudents.add(StudentEntity(studentId, student.name ?: "Unknown", student.rollNumber ?: "", courseId, email = student.email ?: ""))
                 }
                 batch.weeklySchedule?.forEach { schedule ->
-                    val slotId = "slot_${java.util.UUID.randomUUID()}"
                     val rawDay = schedule.day ?: "Unknown"
                     val day = when (rawDay.trim().lowercase()) {
                         "mon", "monday" -> "Monday"
@@ -56,6 +55,7 @@ class Repository(val dao: AppDao) {
                     val parts = timeString.split("-").map { it.trim() }
                     val start = parts.getOrNull(0) ?: timeString
                     val end = parts.getOrNull(1) ?: ""
+                    val slotId = "slot_${courseId}_${day}_${start}_${end}".replace(Regex("[^a-zA-Z0-9_]"), "")
                     newSlots.add(ScheduleSlotEntity(id = slotId, courseId = courseId, dayOfWeek = day, startTime = start, endTime = end, room = loc, section = section))
                 }
             }
@@ -118,6 +118,10 @@ class Repository(val dao: AppDao) {
     fun searchStudents(courseId: String, query: String) = dao.searchStudents(courseId, query)
     suspend fun getStudentsPaged(courseId: String, limit: Int, offset: Int) = withContext(Dispatchers.IO) {
         dao.getStudentsPaged(courseId, limit, offset)
+    }
+
+    suspend fun getStudentsByEmail(email: String): List<StudentEntity> = withContext(Dispatchers.IO) {
+        dao.getStudentsByEmail(email)
     }
 
     fun getAttendanceForSession(date: String, scheduleSlotId: String) = dao.getAttendanceForSession(date, scheduleSlotId)

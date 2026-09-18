@@ -673,7 +673,7 @@ fun AddEditBatchScreen(
                                         AnimatedTextField(
                                             value = bulkStudentsText,
                                             onValueChange = { bulkStudentsText = it },
-                                            label = "Paste students (Name, RollNo)",
+                                            label = "Paste students (e.g. Name, Roll, Email)",
                                             modifier = Modifier.fillMaxWidth().height(150.dp),
                                             baseColor = fieldGroup2Color,
                                             accentColor = accentColor,
@@ -682,18 +682,46 @@ fun AddEditBatchScreen(
                                         Button(
                                             onClick = {
                                                 val lines = bulkStudentsText.split("\n").filter { it.isNotBlank() }
-                                                val newStudents = lines.map { line ->
-                                                    val parts = line.split(",")
-                                                    val name = parts.getOrNull(0)?.trim() ?: ""
-                                                    val roll = parts.getOrNull(1)?.trim() ?: ""
-                                                    StudentImport(UUID.randomUUID().toString(), name, roll)
+                                                val newStudents = lines.mapNotNull { line ->
+                                                    val parts = (if (line.contains("\t")) line.split("\t") else line.split(","))
+                                                        .map { it.trim().removeSurrounding("\"") }
+                                                        .filter { it.isNotBlank() }
+                                                    if (parts.isEmpty()) return@mapNotNull null
+                                                    
+                                                    // Detect email
+                                                    val email = parts.firstOrNull { it.contains("@") && it.contains(".") }?.lowercase()
+                                                    val remaining = parts.filter { it != email }
+                                                    
+                                                    val (name, roll) = when {
+                                                        remaining.size >= 2 -> {
+                                                            val first = remaining[0]
+                                                            val second = remaining[1]
+                                                            if (first.any { it.isDigit() } && !second.any { it.isDigit() }) {
+                                                                Pair(second, first)
+                                                            } else {
+                                                                Pair(first, second)
+                                                            }
+                                                        }
+                                                        remaining.size == 1 -> {
+                                                            Pair(remaining[0], "GEN${(students.size + 1).toString().padStart(3, '0')}")
+                                                        }
+                                                        else -> Pair("Student ${students.size + 1}", "GEN${(students.size + 1).toString().padStart(3, '0')}")
+                                                    }
+                                                    
+                                                    StudentImport(
+                                                        id = UUID.randomUUID().toString(),
+                                                        name = name,
+                                                        rollNumber = roll,
+                                                        email = email
+                                                    )
                                                 }
                                                 val combined = students.toMutableList()
                                                 combined.addAll(newStudents)
                                                 students = combined
                                                 bulkStudentsText = ""
                                                 isBulkAddMode = false
-                                                Toast.makeText(context, "Added ${newStudents.size} students", Toast.LENGTH_SHORT).show()
+                                                val emailCount = newStudents.count { !it.email.isNullOrBlank() }
+                                                Toast.makeText(context, "Added ${newStudents.size} students ($emailCount with sync email)", Toast.LENGTH_SHORT).show()
                                             },
                                             modifier = Modifier
                                                 .fillMaxWidth()

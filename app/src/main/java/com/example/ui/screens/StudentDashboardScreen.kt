@@ -133,13 +133,66 @@ fun StudentDashboardContent(
 
     val officialClasses by viewModel.activeOfficialClasses.collectAsState()
     val officialAttendance by viewModel.officialAttendance.collectAsState()
-    val studentEmail = remember { viewModel.getStudentEmail() }
+    var studentEmail by remember { mutableStateOf(viewModel.getStudentEmail()) }
+    var showEditEmailDialog by remember { mutableStateOf(false) }
 
     // Auto-sync from cloud, student official feed, and run auto-absence engine
     LaunchedEffect(Unit) {
         viewModel.syncDataFromFirebase()
         viewModel.syncOfficialStudentFeed()
         viewModel.autoMarkPastClassesAsAbsent()
+    }
+
+    if (showEditEmailDialog) {
+        var tempEmail by remember { mutableStateOf(studentEmail) }
+        AlertDialog(
+            onDismissRequest = { showEditEmailDialog = false },
+            title = { Text("Sync Official Student Feed") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Enter your enrolled campus email to automatically sync official timetable classes scheduled by faculty.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = tempEmail,
+                        onValueChange = { tempEmail = it },
+                        label = { Text("Campus Email") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        SuggestionChip(
+                            onClick = { tempEmail = "student.demo@campus.edu" },
+                            label = { Text("student.demo@campus.edu", fontSize = 11.sp) }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val cleaned = tempEmail.trim().lowercase()
+                        if (cleaned.isNotBlank()) {
+                            studentEmail = cleaned
+                            viewModel.setStudentEmail(cleaned)
+                        }
+                        showEditEmailDialog = false
+                    }
+                ) {
+                    Text("Save & Sync")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditEmailDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     val allCourses by viewModel.getAllCourses().collectAsState(initial = emptyList())
@@ -245,7 +298,12 @@ fun StudentDashboardContent(
                                 EmptyOfficialScheduleIllustration(
                                     day = dayName,
                                     studentEmail = studentEmail,
-                                    onSync = { viewModel.syncOfficialStudentFeed() }
+                                    onSync = { viewModel.syncOfficialStudentFeed() },
+                                    onChangeEmail = { showEditEmailDialog = true },
+                                    onLoadDemo = {
+                                        viewModel.loadDummyData()
+                                        viewModel.syncOfficialStudentFeed()
+                                    }
                                 )
                             } else {
                                 LazyColumn(
@@ -261,9 +319,15 @@ fun StudentDashboardContent(
                                         val attRecord = officialAttendance.firstOrNull {
                                             it.date == dateStr && (it.slotId == oClass.slotId || it.courseId == oClass.courseId)
                                         }
+                                        val cancelNote = viewModel.getCancellationNote(dateStr, oClass.slotId, oClass.courseId)
+                                        val isCancelled = (attRecord?.status?.equals("CANCELLED", ignoreCase = true) == true ||
+                                                attRecord?.status?.equals("C", ignoreCase = true) == true ||
+                                                viewModel.isSessionCancelled(dateStr, oClass.slotId, oClass.courseId))
                                         OfficialGlassLectureCard(
                                             officialClass = oClass,
                                             attendanceRecord = attRecord,
+                                            isCancelled = isCancelled,
+                                            cancelNote = cancelNote,
                                             onHide = {
                                                 viewModel.hideOfficialClass(oClass.slotId)
                                                 android.widget.Toast.makeText(context, "Class hidden. Restore anytime in Profile.", android.widget.Toast.LENGTH_SHORT).show()
@@ -341,8 +405,11 @@ fun StudentDashboardContent(
                                                 }
                                                 val isMarkedPresent = attendanceRecord?.status?.equals("P", ignoreCase = true) == true ||
                                                         attendanceRecord?.status?.equals("present", ignoreCase = true) == true
+                                                val isTeacherCancelled = viewModel.isSessionCancelled(dateStr, slot.id, slot.courseId)
                                                 val isMarkedCancelled = attendanceRecord?.status?.equals("CANCELLED", ignoreCase = true) == true ||
-                                                        attendanceRecord?.status?.equals("C", ignoreCase = true) == true
+                                                        attendanceRecord?.status?.equals("C", ignoreCase = true) == true ||
+                                                        isTeacherCancelled
+                                                val cancelNote = viewModel.getCancellationNote(dateStr, slot.id, slot.courseId)
 
                                                 val subjectStats = courseAttendanceMap[slot.courseId]
 
@@ -352,6 +419,8 @@ fun StudentDashboardContent(
                                                     isLive = isLive,
                                                     isMarkedPresent = isMarkedPresent,
                                                     isMarkedCancelled = isMarkedCancelled,
+                                                    isTeacherCancelled = isTeacherCancelled,
+                                                    cancelNote = cancelNote,
                                                     timeHint = timeHint,
                                                     subjectStats = subjectStats,
                                                     onMarkSelfAttendance = {
@@ -846,6 +915,8 @@ fun StudentGlassLectureCard(
     isLive: Boolean = false,
     isMarkedPresent: Boolean = false,
     isMarkedCancelled: Boolean = false,
+    isTeacherCancelled: Boolean = false,
+    cancelNote: String = "",
     timeHint: String? = null,
     subjectStats: Pair<Int, Int>? = null,
     onMarkSelfAttendance: () -> Unit,
@@ -861,14 +932,18 @@ fun StudentGlassLectureCard(
         Color(0xFF8B5CF6)  // Violet
     )
 
+    val isCancelled = isMarkedCancelled || isTeacherCancelled
     val liveGreen = Color(0xFF10B981)
-    val targetBarColor = if (isLive) liveGreen else subjectColors[abs(slot.courseId.hashCode()) % subjectColors.size]
+    val isDarkTheme = isSystemInDarkTheme()
+    val targetBarColor = if (isCancelled) Color(0xFFEF4444) else if (isLive) liveGreen else subjectColors[abs(slot.courseId.hashCode()) % subjectColors.size]
     val barColor by animateColorAsState(targetBarColor, tween(500), label = "barColor")
 
-    val targetBgColor = if (isLive) liveGreen.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface
+    val targetBgColor = if (isCancelled) {
+        if (isDarkTheme) Color(0xFF2A0D0D) else Color(0xFFFEF2F2)
+    } else if (isLive) liveGreen.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface
     val bgColor by animateColorAsState(targetBgColor, tween(500), label = "bgColor")
 
-    val targetBorderColor = if (isLive) liveGreen.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.18f)
+    val targetBorderColor = if (isCancelled) Color(0xFFEF4444).copy(alpha = 0.6f) else if (isLive) liveGreen.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.18f)
     val borderColor by animateColorAsState(targetBorderColor, tween(500), label = "borderColor")
 
     Card(
@@ -877,7 +952,7 @@ fun StudentGlassLectureCard(
             .shadow(
                 elevation = 6.dp,
                 shape = RoundedCornerShape(24.dp),
-                spotColor = if (isLive) liveGreen.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.16f),
+                spotColor = if (isCancelled) Color(0xFFEF4444).copy(alpha = 0.3f) else if (isLive) liveGreen.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.16f),
                 ambientColor = Color.Black.copy(alpha = 0.08f)
             )
             .bounceClick(scaleDown = 0.98f, onClick = onClick),
@@ -1096,11 +1171,47 @@ fun StudentGlassLectureCard(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 // 6. STUDENT SELF ATTENDANCE & CLASS CANCELLED ACTION ROW
-                if (isMarkedCancelled) {
+                if (isCancelled) {
+                    if (cancelNote.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isDarkTheme) Color(0xFF3B1212) else Color(0xFFFEE2E2),
+                            border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.EventBusy,
+                                        contentDescription = null,
+                                        tint = Color(0xFFDC2626),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        "Teacher's Cancellation Note",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF991B1B)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Text(
+                                    text = cancelNote,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (isDarkTheme) Color(0xFFFECDD3) else Color(0xFF7F1D1D)
+                                )
+                            }
+                        }
+                    }
+
                     Surface(
                         shape = RoundedCornerShape(14.dp),
-                        color = Color(0xFF64748B).copy(alpha = 0.12f),
-                        border = BorderStroke(1.dp, Color(0xFF64748B).copy(alpha = 0.35f)),
+                        color = if (isDarkTheme) Color(0xFF450A0A) else Color(0xFFFEE2E2),
+                        border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
@@ -1114,28 +1225,30 @@ fun StudentGlassLectureCard(
                                 Icon(
                                     Icons.Default.EventBusy,
                                     contentDescription = null,
-                                    tint = Color(0xFF64748B),
+                                    tint = Color(0xFFDC2626),
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     "CLASS CANCELLED",
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = Color(0xFF64748B),
+                                    color = Color(0xFFDC2626),
                                     style = MaterialTheme.typography.labelMedium
                                 )
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(
-                                    onClick = onMarkCancelled,
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Text(
-                                        "Undo",
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Bold,
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
+                                if (!isTeacherCancelled) {
+                                    TextButton(
+                                        onClick = onMarkCancelled,
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            "Undo",
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.Bold,
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
                                 }
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Button(
@@ -1155,36 +1268,10 @@ fun StudentGlassLectureCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(modifier = Modifier.weight(1.3f)) {
+                        Box(modifier = Modifier.weight(1f)) {
                             StudentSelfAttendanceButton(
                                 isMarked = isMarkedPresent,
                                 onMark = onMarkSelfAttendance
-                            )
-                        }
-
-                        OutlinedButton(
-                            onClick = onMarkCancelled,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(46.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = Color(0xFF64748B)
-                            ),
-                            border = BorderStroke(1.2.dp, Color(0xFF64748B).copy(alpha = 0.45f))
-                        ) {
-                            Icon(
-                                Icons.Default.EventBusy,
-                                contentDescription = null,
-                                modifier = Modifier.size(15.dp),
-                                tint = Color(0xFF64748B)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                "Cancelled",
-                                maxLines = 1,
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.labelMedium
                             )
                         }
                     }
@@ -1416,10 +1503,14 @@ private data class StatusBadgeConfig(
 fun OfficialGlassLectureCard(
     officialClass: com.example.data.OfficialClassEntity,
     attendanceRecord: com.example.data.OfficialAttendanceEntity?,
+    isCancelled: Boolean = false,
+    cancelNote: String = "",
     onHide: () -> Unit
 ) {
     val isDark = isSystemInDarkTheme()
     var showHideConfirm by remember { mutableStateOf(false) }
+    val attStatus = attendanceRecord?.status?.uppercase()
+    val effectiveCancelled = isCancelled || attStatus == "CANCELLED" || attStatus == "C"
 
     if (showHideConfirm) {
         AlertDialog(
@@ -1453,13 +1544,17 @@ fun OfficialGlassLectureCard(
             .shadow(
                 elevation = 3.dp,
                 shape = RoundedCornerShape(20.dp),
-                spotColor = Color(0xFF3B82F6).copy(alpha = 0.15f)
+                spotColor = if (effectiveCancelled) Color(0xFFEF4444).copy(alpha = 0.25f) else Color(0xFF3B82F6).copy(alpha = 0.15f)
             ),
         shape = RoundedCornerShape(20.dp),
-        color = if (isDark) Color(0xFF1E293B) else Color.White,
+        color = if (effectiveCancelled) {
+            if (isDark) Color(0xFF2A0D0D) else Color(0xFFFEF2F2)
+        } else {
+            if (isDark) Color(0xFF1E293B) else Color.White
+        },
         border = BorderStroke(
-            1.dp,
-            if (isDark) Color(0xFF334155) else Color(0xFFE2E8F0)
+            if (effectiveCancelled) 1.2.dp else 1.dp,
+            if (effectiveCancelled) Color(0xFFEF4444).copy(alpha = 0.65f) else if (isDark) Color(0xFF334155) else Color(0xFFE2E8F0)
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -1475,13 +1570,13 @@ fun OfficialGlassLectureCard(
                 ) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                        color = if (effectiveCancelled) Color(0xFFEF4444).copy(alpha = 0.15f) else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
                     ) {
                         Text(
                             text = officialClass.courseCode.ifBlank { "OFFICIAL" },
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = if (effectiveCancelled) Color(0xFFDC2626) else MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                         )
                     }
@@ -1496,6 +1591,20 @@ fun OfficialGlassLectureCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                         )
+                    }
+                    if (effectiveCancelled) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.errorContainer
+                        ) {
+                            Text(
+                                text = "CANCELLED",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
                     }
                 }
 
@@ -1519,7 +1628,11 @@ fun OfficialGlassLectureCard(
                 text = officialClass.courseName,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
+                color = if (effectiveCancelled) {
+                    if (isDark) Color(0xFFFCA5A5) else Color(0xFF7F1D1D)
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                }
             )
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -1606,9 +1719,55 @@ fun OfficialGlassLectureCard(
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            // Teacher Cancellation Note (if any)
+            if (effectiveCancelled && cancelNote.isNotBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isDark) Color(0xFF3B1212) else Color(0xFFFFF1F2),
+                    border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                ) {
+                    Column(modifier = Modifier.padding(11.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.EventBusy,
+                                contentDescription = null,
+                                tint = Color(0xFFDC2626),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Teacher's Cancellation Note",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF991B1B)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = cancelNote,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (isDark) Color(0xFFFECDD3) else Color(0xFF881337),
+                            lineHeight = 18.sp
+                        )
+                    }
+                }
+            }
+
             // Live Attendance Status Badge (View Only Mode)
-            val attStatus = attendanceRecord?.status?.uppercase()
             val badgeConfig = when {
+                effectiveCancelled -> {
+                    StatusBadgeConfig(
+                        bg = if (isDark) Color(0xFF450A0A) else Color(0xFFFEE2E2),
+                        border = Color(0xFFEF4444).copy(alpha = 0.6f),
+                        label = "🚫 Class Cancelled by Faculty",
+                        icon = Icons.Default.EventBusy,
+                        tint = Color(0xFFDC2626)
+                    )
+                }
                 attStatus == "P" || attStatus == "PRESENT" -> {
                     StatusBadgeConfig(
                         bg = Color(0xFF10B981).copy(alpha = 0.12f),
@@ -1625,15 +1784,6 @@ fun OfficialGlassLectureCard(
                         label = "✗ Marked Absent by Faculty",
                         icon = Icons.Default.Cancel,
                         tint = Color(0xFFDC2626)
-                    )
-                }
-                attStatus == "CANCELLED" || attStatus == "C" -> {
-                    StatusBadgeConfig(
-                        bg = Color(0xFFF59E0B).copy(alpha = 0.12f),
-                        border = Color(0xFFF59E0B).copy(alpha = 0.35f),
-                        label = "🚫 Class Cancelled by Faculty",
-                        icon = Icons.Default.EventBusy,
-                        tint = Color(0xFFD97706)
                     )
                 }
                 else -> {
@@ -1682,7 +1832,9 @@ fun OfficialGlassLectureCard(
 fun EmptyOfficialScheduleIllustration(
     day: String,
     studentEmail: String,
-    onSync: () -> Unit = {}
+    onSync: () -> Unit = {},
+    onChangeEmail: () -> Unit = {},
+    onLoadDemo: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -1693,7 +1845,7 @@ fun EmptyOfficialScheduleIllustration(
     ) {
         Box(
             modifier = Modifier
-                .size(100.dp)
+                .size(90.dp)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)),
             contentAlignment = Alignment.Center
@@ -1701,52 +1853,73 @@ fun EmptyOfficialScheduleIllustration(
             Icon(
                 Icons.Default.School,
                 contentDescription = null,
-                modifier = Modifier.size(50.dp),
+                modifier = Modifier.size(46.dp),
                 tint = MaterialTheme.colorScheme.primary
             )
         }
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(16.dp))
         Text(
             text = "No Official Classes on $day",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface
         )
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         Text(
-            text = "Classes automatically appear here as your faculty members add your campus email to their course batches.",
+            text = "Classes automatically appear here when faculty adds your campus email to their course batches.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(14.dp))
+        
+        // Enrolled Email Chip - Clickable to change
         Surface(
-            shape = RoundedCornerShape(10.dp),
+            onClick = onChangeEmail,
+            shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = studentEmail.ifBlank { "student.demo@campus.edu" },
-                    fontSize = 11.5.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurface
                 )
+                Spacer(modifier = Modifier.width(6.dp))
+                Icon(Icons.Default.Edit, contentDescription = "Edit Email", modifier = Modifier.size(13.dp), tint = MaterialTheme.colorScheme.primary)
             }
         }
-        Spacer(modifier = Modifier.height(18.dp))
-        FilledTonalButton(
-            onClick = onSync,
-            shape = RoundedCornerShape(12.dp)
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Sync Official Feed", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            FilledTonalButton(
+                onClick = onSync,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Sync Feed", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            }
+            
+            OutlinedButton(
+                onClick = onLoadDemo,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Load Demo Classes", fontSize = 13.sp)
+            }
         }
     }
 }
