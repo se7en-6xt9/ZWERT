@@ -138,9 +138,16 @@ fun StudentDashboardContent(
 
     // Auto-sync from cloud, student official feed, and run auto-absence engine
     LaunchedEffect(Unit) {
+        viewModel.syncOfficialClassesFromLocalSlots()
         viewModel.syncDataFromFirebase()
         viewModel.syncOfficialStudentFeed()
         viewModel.autoMarkPastClassesAsAbsent()
+    }
+
+    LaunchedEffect(officialClasses.size) {
+        if (officialClasses.isEmpty()) {
+            viewModel.syncOfficialStudentFeed()
+        }
     }
 
     if (showEditEmailDialog) {
@@ -214,11 +221,12 @@ fun StudentDashboardContent(
         }
     }
 
-    // Overall attendance stats
-    val attendanceStats = remember(allAttendance) {
+    // Overall attendance stats (combining personal and official ERP records)
+    val attendanceStats = remember(allAttendance, officialAttendance) {
         val selfRecords = allAttendance.filter { it.studentId == "self" }
-        val total = selfRecords.size
-        val present = selfRecords.count { it.status.equals("P", ignoreCase = true) || it.status.equals("present", ignoreCase = true) }
+        val allCombined = (selfRecords.map { it.status } + officialAttendance.map { it.status })
+        val total = allCombined.size
+        val present = allCombined.count { it.equals("P", ignoreCase = true) || it.equals("present", ignoreCase = true) }
         val pct = if (total > 0) (present * 100f) / total else 0f
         Triple(present, total, pct)
     }
@@ -278,8 +286,40 @@ fun StudentDashboardContent(
                     }
 
                     if (timetableMode == "OFFICIAL") {
-                        val dayOfficialClasses = remember(officialClasses, dayName) {
-                            officialClasses.filter { it.dayOfWeek.equals(dayName, ignoreCase = true) }
+                        val dayOfficialClasses = remember(officialClasses, scheduleSlots, courseMap, dayName) {
+                            val fromOfficial = officialClasses.filter {
+                                val oDay = it.dayOfWeek.trim().lowercase()
+                                val pDay = dayName.trim().lowercase()
+                                oDay == pDay ||
+                                (oDay.startsWith("mon") && pDay.startsWith("mon")) ||
+                                (oDay.startsWith("tue") && pDay.startsWith("tue")) ||
+                                (oDay.startsWith("wed") && pDay.startsWith("wed")) ||
+                                (oDay.startsWith("thu") && pDay.startsWith("thu")) ||
+                                (oDay.startsWith("fri") && pDay.startsWith("fri")) ||
+                                (oDay.startsWith("sat") && pDay.startsWith("sat")) ||
+                                (oDay.startsWith("sun") && pDay.startsWith("sun"))
+                            }
+                            if (fromOfficial.isNotEmpty()) {
+                                fromOfficial
+                            } else {
+                                scheduleSlots.map { slot ->
+                                    val course = courseMap[slot.courseId]
+                                    com.example.data.OfficialClassEntity(
+                                        slotId = slot.id,
+                                        courseId = slot.courseId,
+                                        courseName = course?.name ?: "Subject",
+                                        courseCode = course?.code ?: "",
+                                        dayOfWeek = slot.dayOfWeek,
+                                        startTime = slot.startTime,
+                                        endTime = slot.endTime,
+                                        room = slot.room,
+                                        section = slot.section,
+                                        facultyName = "Prof. Rajesh Sharma",
+                                        facultyEmail = "prof.rajesh@campus.edu",
+                                        isHidden = false
+                                    )
+                                }
+                            }
                         }
 
                         AnimatedContent(
@@ -298,18 +338,20 @@ fun StudentDashboardContent(
                                 EmptyOfficialScheduleIllustration(
                                     day = dayName,
                                     studentEmail = studentEmail,
+                                    hasPersonalClasses = scheduleSlots.isNotEmpty(),
+                                    personalClassCount = scheduleSlots.size,
+                                    onSwitchToPersonal = { timetableMode = "PERSONAL" },
                                     onSync = { viewModel.syncOfficialStudentFeed() },
                                     onChangeEmail = { showEditEmailDialog = true },
                                     onLoadDemo = {
                                         viewModel.loadDummyData()
-                                        viewModel.syncOfficialStudentFeed()
                                     }
                                 )
                             } else {
                                 LazyColumn(
                                     state = listState,
                                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
                                     items(
                                         items = dayOfficialClasses,
@@ -318,6 +360,18 @@ fun StudentDashboardContent(
                                         val dateStr = pageDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
                                         val attRecord = officialAttendance.firstOrNull {
                                             it.date == dateStr && (it.slotId == oClass.slotId || it.courseId == oClass.courseId)
+                                        } ?: allAttendance.firstOrNull {
+                                            it.date == dateStr && (it.scheduleSlotId == oClass.slotId || it.courseId == oClass.courseId)
+                                        }?.let { localAtt ->
+                                            com.example.data.OfficialAttendanceEntity(
+                                                id = "${localAtt.date}_${localAtt.scheduleSlotId}",
+                                                date = localAtt.date,
+                                                slotId = localAtt.scheduleSlotId,
+                                                courseId = localAtt.courseId,
+                                                courseName = oClass.courseName,
+                                                status = localAtt.status,
+                                                markedAt = localAtt.markedAt
+                                            )
                                         }
                                         val cancelNote = viewModel.getCancellationNote(dateStr, oClass.slotId, oClass.courseId)
                                         val isCancelled = (attRecord?.status?.equals("CANCELLED", ignoreCase = true) == true ||
@@ -493,11 +547,11 @@ fun StudentDashboardContent(
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
                     .padding(bottom = 16.dp)
-                    .padding(horizontal = 20.dp)
+                    .padding(horizontal = 16.dp)
             ) {
                 Row(
-                    modifier = Modifier.padding(6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val isOfficial = (timetableMode == "OFFICIAL")
@@ -506,14 +560,14 @@ fun StudentDashboardContent(
                     // 1. OFFICIAL TIMETABLE TAB
                     Box(
                         modifier = Modifier
-                            .weight(1.15f)
-                            .clip(RoundedCornerShape(26.dp))
+                            .weight(1f)
+                            .clip(RoundedCornerShape(24.dp))
                             .background(if (isOfficial) accentColor else Color.Transparent)
                             .clickable {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 timetableMode = "OFFICIAL"
                             }
-                            .padding(vertical = 11.dp, horizontal = 10.dp),
+                            .padding(vertical = 9.dp, horizontal = 6.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Row(
@@ -526,11 +580,14 @@ fun StudentDashboardContent(
                                 tint = if (isOfficial) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(17.dp)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 "Official",
                                 fontWeight = if (isOfficial) FontWeight.Bold else FontWeight.Medium,
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Clip,
                                 color = if (isOfficial) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -539,14 +596,14 @@ fun StudentDashboardContent(
                     // 2. PERSONAL TIMETABLE TAB
                     Box(
                         modifier = Modifier
-                            .weight(1.15f)
-                            .clip(RoundedCornerShape(26.dp))
+                            .weight(1f)
+                            .clip(RoundedCornerShape(24.dp))
                             .background(if (isPersonal) accentColor else Color.Transparent)
                             .clickable {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 timetableMode = "PERSONAL"
                             }
-                            .padding(vertical = 11.dp, horizontal = 10.dp),
+                            .padding(vertical = 9.dp, horizontal = 6.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Row(
@@ -559,11 +616,14 @@ fun StudentDashboardContent(
                                 tint = if (isPersonal) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(17.dp)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 "Personal",
                                 fontWeight = if (isPersonal) FontWeight.Bold else FontWeight.Medium,
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Clip,
                                 color = if (isPersonal) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -573,13 +633,13 @@ fun StudentDashboardContent(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(26.dp))
+                            .clip(RoundedCornerShape(24.dp))
                             .background(Color.Transparent)
                             .clickable {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 navController.navigate("profile")
                             }
-                            .padding(vertical = 11.dp, horizontal = 10.dp),
+                            .padding(vertical = 9.dp, horizontal = 6.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Row(
@@ -592,11 +652,14 @@ fun StudentDashboardContent(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(17.dp)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 "Profile",
                                 fontWeight = FontWeight.Medium,
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Clip,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -1512,6 +1575,37 @@ fun OfficialGlassLectureCard(
     val attStatus = attendanceRecord?.status?.uppercase()
     val effectiveCancelled = isCancelled || attStatus == "CANCELLED" || attStatus == "C"
 
+    val isPresent = (attStatus == "P" || attStatus == "PRESENT")
+    val isAbsent = (attStatus == "A" || attStatus == "ABSENT")
+
+    val (cardColor, borderBrush) = when {
+        effectiveCancelled -> {
+            val bg = if (isDark) Color(0xFF2A0D0D) else Color(0xFFFEF2F2)
+            val border = Brush.verticalGradient(listOf(Color(0xFFEF4444).copy(alpha = 0.8f), Color(0xFFDC2626).copy(alpha = 0.4f)))
+            Pair(bg, border)
+        }
+        isPresent -> {
+            val bg = if (isDark) Color(0xFF0D2818) else Color(0xFFF0FDF4)
+            val border = Brush.verticalGradient(listOf(Color(0xFF10B981).copy(alpha = 0.8f), Color(0xFF059669).copy(alpha = 0.4f)))
+            Pair(bg, border)
+        }
+        isAbsent -> {
+            val bg = if (isDark) Color(0xFF2D1515) else Color(0xFFFEF2F2)
+            val border = Brush.verticalGradient(listOf(Color(0xFFEF4444).copy(alpha = 0.8f), Color(0xFFB91C1C).copy(alpha = 0.4f)))
+            Pair(bg, border)
+        }
+        else -> {
+            val bg = if (isDark) Color(0xFF1E293B) else Color.White
+            val border = Brush.verticalGradient(
+                listOf(
+                    if (isDark) Color(0xFF475569) else Color(0xFFCBD5E1),
+                    if (isDark) Color(0xFF334155).copy(alpha = 0.5f) else Color(0xFFF1F5F9).copy(alpha = 0.5f)
+                )
+            )
+            Pair(bg, border)
+        }
+    }
+
     if (showHideConfirm) {
         AlertDialog(
             onDismissRequest = { showHideConfirm = false },
@@ -1542,67 +1636,93 @@ fun OfficialGlassLectureCard(
         modifier = Modifier
             .fillMaxWidth()
             .shadow(
-                elevation = 3.dp,
-                shape = RoundedCornerShape(20.dp),
-                spotColor = if (effectiveCancelled) Color(0xFFEF4444).copy(alpha = 0.25f) else Color(0xFF3B82F6).copy(alpha = 0.15f)
+                elevation = 2.dp,
+                shape = RoundedCornerShape(16.dp),
+                spotColor = if (effectiveCancelled) Color(0xFFEF4444).copy(alpha = 0.2f)
+                else if (isPresent) Color(0xFF10B981).copy(alpha = 0.15f)
+                else Color.Black.copy(alpha = 0.08f)
             ),
-        shape = RoundedCornerShape(20.dp),
-        color = if (effectiveCancelled) {
-            if (isDark) Color(0xFF2A0D0D) else Color(0xFFFEF2F2)
-        } else {
-            if (isDark) Color(0xFF1E293B) else Color.White
-        },
-        border = BorderStroke(
-            if (effectiveCancelled) 1.2.dp else 1.dp,
-            if (effectiveCancelled) Color(0xFFEF4444).copy(alpha = 0.65f) else if (isDark) Color(0xFF334155) else Color(0xFFE2E8F0)
-        )
+        shape = RoundedCornerShape(16.dp),
+        color = cardColor,
+        border = BorderStroke(1.dp, borderBrush)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            // Header Row: Course Code + Time + Hide Icon
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            // ROW 1: Type Pill + Time Slot + Hide Class Icon
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    val pillBg = when {
+                        effectiveCancelled -> Color(0xFFEF4444).copy(alpha = 0.15f)
+                        isPresent -> Color(0xFF10B981).copy(alpha = 0.15f)
+                        isAbsent -> Color(0xFFEF4444).copy(alpha = 0.15f)
+                        else -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                    }
+                    val pillText = when {
+                        effectiveCancelled -> Color(0xFFDC2626)
+                        isPresent -> Color(0xFF059669)
+                        isAbsent -> Color(0xFFDC2626)
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+
                     Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (effectiveCancelled) Color(0xFFEF4444).copy(alpha = 0.15f) else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                        shape = RoundedCornerShape(6.dp),
+                        color = pillBg
                     ) {
                         Text(
                             text = officialClass.courseCode.ifBlank { "OFFICIAL" },
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (effectiveCancelled) Color(0xFFDC2626) else MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            color = pillText,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                         )
                     }
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+
+                    // Time display
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .background(
+                                if (isDark) Color(0xFF0F172A).copy(alpha = 0.6f) else Color(0xFFF1F5F9),
+                                RoundedCornerShape(6.dp)
+                            )
+                            .padding(horizontal = 7.dp, vertical = 2.dp)
                     ) {
+                        Icon(
+                            Icons.Default.AccessTime,
+                            contentDescription = null,
+                            modifier = Modifier.size(11.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
                         Text(
                             text = "${officialClass.startTime} - ${officialClass.endTime}",
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+
                     if (effectiveCancelled) {
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(6.dp),
                             color = MaterialTheme.colorScheme.errorContainer
                         ) {
                             Text(
                                 text = "CANCELLED",
-                                fontSize = 11.sp,
+                                fontSize = 9.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
                     }
@@ -1610,217 +1730,227 @@ fun OfficialGlassLectureCard(
 
                 IconButton(
                     onClick = { showHideConfirm = true },
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.size(24.dp)
                 ) {
                     Icon(
                         Icons.Default.VisibilityOff,
                         contentDescription = "Hide Class",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
-                        modifier = Modifier.size(18.dp)
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.size(15.dp)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
-            // Course Name
+            // ROW 2: Subject / Course Name
             Text(
                 text = officialClass.courseName,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
+                fontSize = 14.5.sp,
                 color = if (effectiveCancelled) {
                     if (isDark) Color(0xFFFCA5A5) else Color(0xFF7F1D1D)
                 } else {
                     MaterialTheme.colorScheme.onSurface
-                }
+                },
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(3.dp))
 
-            // Room and Section info
+            // ROW 3: Faculty Name (small) + Room & Section to the right in one compact line
             Row(
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // Faculty name (smaller, compact)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f, fill = false)
+                ) {
+                    Icon(
+                        Icons.Default.Person,
+                        contentDescription = null,
+                        modifier = Modifier.size(11.dp),
+                        tint = Color(0xFF3B82F6)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = officialClass.facultyName.ifBlank { "Faculty Instructor" },
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                // Room info (to the right)
                 if (officialClass.room.isNotBlank()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .background(
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                RoundedCornerShape(4.dp)
+                            )
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
                         Icon(
                             Icons.Default.MeetingRoom,
                             contentDescription = null,
-                            modifier = Modifier.size(13.dp),
+                            modifier = Modifier.size(10.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(modifier = Modifier.width(3.dp))
+                        Spacer(modifier = Modifier.width(2.dp))
                         Text(
-                            officialClass.room,
-                            fontSize = 12.sp,
+                            text = officialClass.room,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
+
+                // Section info (to the right of room)
                 if (officialClass.section.isNotBlank()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .background(
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                RoundedCornerShape(4.dp)
+                            )
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
                         Icon(
                             Icons.Default.Group,
                             contentDescription = null,
-                            modifier = Modifier.size(13.dp),
+                            modifier = Modifier.size(10.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(modifier = Modifier.width(3.dp))
+                        Spacer(modifier = Modifier.width(2.dp))
                         Text(
-                            officialClass.section,
-                            fontSize = 12.sp,
+                            text = officialClass.section,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Faculty Tag
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                        shape = RoundedCornerShape(10.dp)
-                    )
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Default.School,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = Color(0xFF3B82F6)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = officialClass.facultyName.ifBlank { "Faculty Instructor" },
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = Color(0xFF3B82F6).copy(alpha = 0.12f)
-                ) {
-                    Text(
-                        text = "Official Faculty",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF2563EB),
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
             // Teacher Cancellation Note (if any)
             if (effectiveCancelled && cancelNote.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(8.dp),
                     color = if (isDark) Color(0xFF3B1212) else Color(0xFFFFF1F2),
-                    border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp)
+                    border = BorderStroke(1.dp, Color(0xFFFCA5A5).copy(alpha = 0.6f)),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(11.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.EventBusy,
-                                contentDescription = null,
-                                tint = Color(0xFFDC2626),
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Teacher's Cancellation Note",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF991B1B)
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.EventBusy,
+                            contentDescription = null,
+                            tint = Color(0xFFDC2626),
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = cancelNote,
-                            fontSize = 13.sp,
+                            fontSize = 10.5.sp,
                             fontWeight = FontWeight.Medium,
                             color = if (isDark) Color(0xFFFECDD3) else Color(0xFF881337),
-                            lineHeight = 18.sp
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
             }
 
-            // Live Attendance Status Badge (View Only Mode)
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Live Attendance Status Badge (Matching StudentGlassLectureCard inner button shape & height)
             val badgeConfig = when {
                 effectiveCancelled -> {
                     StatusBadgeConfig(
                         bg = if (isDark) Color(0xFF450A0A) else Color(0xFFFEE2E2),
                         border = Color(0xFFEF4444).copy(alpha = 0.6f),
-                        label = "🚫 Class Cancelled by Faculty",
+                        label = "Class Cancelled by Faculty",
                         icon = Icons.Default.EventBusy,
                         tint = Color(0xFFDC2626)
                     )
                 }
-                attStatus == "P" || attStatus == "PRESENT" -> {
+                isPresent -> {
                     StatusBadgeConfig(
-                        bg = Color(0xFF10B981).copy(alpha = 0.12f),
-                        border = Color(0xFF10B981).copy(alpha = 0.35f),
-                        label = "✓ Marked Present by Faculty",
-                        icon = Icons.Default.CheckCircle,
-                        tint = Color(0xFF059669)
+                        bg = Color(0xFF10B981),
+                        border = Color(0xFF059669),
+                        label = "Marked Present by Faculty",
+                        icon = Icons.Default.Check,
+                        tint = Color.White
                     )
                 }
-                attStatus == "A" || attStatus == "ABSENT" -> {
+                isAbsent -> {
                     StatusBadgeConfig(
-                        bg = Color(0xFFEF4444).copy(alpha = 0.12f),
-                        border = Color(0xFFEF4444).copy(alpha = 0.35f),
-                        label = "✗ Marked Absent by Faculty",
-                        icon = Icons.Default.Cancel,
-                        tint = Color(0xFFDC2626)
+                        bg = Color(0xFFEF4444),
+                        border = Color(0xFFDC2626),
+                        label = "Marked Absent by Faculty",
+                        icon = Icons.Default.Close,
+                        tint = Color.White
                     )
                 }
                 else -> {
                     StatusBadgeConfig(
-                        bg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                        border = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                        label = "⏳ Scheduled • Awaiting Faculty Attendance",
+                        bg = if (isDark) Color(0xFF334155).copy(alpha = 0.6f) else Color(0xFFE2E8F0),
+                        border = if (isDark) Color(0xFF475569) else Color(0xFFCBD5E1),
+                        label = "Official • Awaiting Attendance",
                         icon = Icons.Default.Schedule,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        tint = if (isDark) Color(0xFF94A3B8) else Color(0xFF475569)
                     )
                 }
             }
 
             Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(34.dp),
+                shape = RoundedCornerShape(10.dp),
                 color = badgeConfig.bg,
-                border = BorderStroke(1.dp, badgeConfig.border)
+                border = BorderStroke(0.8.dp, badgeConfig.border)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
                 ) {
-                    Icon(badgeConfig.icon, contentDescription = null, tint = badgeConfig.tint, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(
+                        badgeConfig.icon,
+                        contentDescription = null,
+                        tint = badgeConfig.tint,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         badgeConfig.label,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
                         color = badgeConfig.tint
                     )
-                    Spacer(modifier = Modifier.weight(1f))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        "View-Only",
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = badgeConfig.tint.copy(alpha = 0.7f)
+                        "(Read Only)",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = badgeConfig.tint.copy(alpha = 0.8f)
                     )
                 }
             }
@@ -1832,6 +1962,9 @@ fun OfficialGlassLectureCard(
 fun EmptyOfficialScheduleIllustration(
     day: String,
     studentEmail: String,
+    hasPersonalClasses: Boolean = false,
+    personalClassCount: Int = 0,
+    onSwitchToPersonal: () -> Unit = {},
     onSync: () -> Unit = {},
     onChangeEmail: () -> Unit = {},
     onLoadDemo: () -> Unit = {}
@@ -1898,6 +2031,19 @@ fun EmptyOfficialScheduleIllustration(
         }
         
         Spacer(modifier = Modifier.height(16.dp))
+
+        if (hasPersonalClasses) {
+            Button(
+                onClick = onSwitchToPersonal,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                modifier = Modifier.padding(bottom = 12.dp)
+            ) {
+                Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Switch to Personal Schedule ($personalClassCount classes)", fontWeight = FontWeight.SemiBold)
+            }
+        }
         
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1918,7 +2064,7 @@ fun EmptyOfficialScheduleIllustration(
             ) {
                 Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(15.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Load Demo Classes", fontSize = 13.sp)
+                Text("Load All Demo Classes", fontSize = 13.sp)
             }
         }
     }

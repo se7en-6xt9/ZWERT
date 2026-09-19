@@ -133,6 +133,9 @@ class Repository(val dao: AppDao) {
         dao.getAttendanceForCourseSync(courseId)
     }
     fun getAttendanceForStudent(studentId: String) = dao.getAttendanceForStudent(studentId)
+    suspend fun getAttendanceForStudentSync(studentId: String): List<AttendanceRecordEntity> = withContext(Dispatchers.IO) {
+        dao.getAttendanceForStudentSync(studentId)
+    }
     fun getAttendanceForStudentInCourse(studentId: String, courseId: String) = dao.getAttendanceForStudentInCourse(studentId, courseId)
     fun getAllAttendance() = dao.getAllAttendance()
     suspend fun getAllAttendanceSync() = withContext(Dispatchers.IO) { dao.getAllAttendanceSync() }
@@ -174,5 +177,8 @@ class Repository(val dao: AppDao) {
     fun getAllOfficialAttendance() = dao.getAllOfficialAttendance()
     suspend fun insertOfficialAttendance(records: List<OfficialAttendanceEntity>) = withContext(Dispatchers.IO) {
         dao.insertOfficialAttendance(records)
+    }
+    suspend fun deleteOfficialAttendanceForSession(date: String, slotId: String) = withContext(Dispatchers.IO) {
+        dao.deleteOfficialAttendanceForSession(date, slotId)
     }
 }

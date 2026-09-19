@@ -219,6 +219,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var roleListener: com.google.firebase.firestore.ListenerRegistration? = null
     private var batchesListener: com.google.firebase.firestore.ListenerRegistration? = null
     private var snapshotsInSyncListener: com.google.firebase.firestore.ListenerRegistration? = null
+    private var studentFeedClassesListener: com.google.firebase.firestore.ListenerRegistration? = null
+    private var studentFeedAttendanceListener: com.google.firebase.firestore.ListenerRegistration? = null
 
     private val cancelNotesPrefs by lazy {
         getApplication<Application>().getSharedPreferences("class_cancellation_notes", Context.MODE_PRIVATE)
@@ -431,6 +433,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         batchesListener = null
         snapshotsInSyncListener?.remove()
         snapshotsInSyncListener = null
+        studentFeedClassesListener?.remove()
+        studentFeedClassesListener = null
+        studentFeedAttendanceListener?.remove()
+        studentFeedAttendanceListener = null
         _userProfile.value = null
     }
 
@@ -439,6 +445,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _userRole.value = if (isFaculty) "teacher" else "student"
         val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
         prefs.edit().putString("profile_role", if (isFaculty) "teacher" else "student").apply()
+        if (!isFaculty) {
+            syncOfficialStudentFeed()
+        }
     }
 
     fun setUserRole(role: String, onComplete: () -> Unit = {}) {
@@ -446,6 +455,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isFaculty.value = (role == "teacher")
         val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
         prefs.edit().putString("profile_role", role).apply()
+        if (role == "student") {
+            syncOfficialStudentFeed()
+        }
 
         viewModelScope.launch {
             val uid = auth?.currentUser?.uid
@@ -665,9 +677,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     if (batches.isNotEmpty() || allAttendanceRecords.isNotEmpty()) {
                         if (batches.isNotEmpty()) {
-                            repository.wipeAllData() // Wipe old local data before replacing with cloud state
+                            repository.dao.wipeCourses()
+                            repository.dao.wipeStudents()
+                            repository.dao.wipeScheduleSlots()
                             val importData = com.example.data.ImportTimetableData(teacher = null, batches = batches)
                             repository.processTimetableImport(importData)
+                            syncOfficialClassesFromLocalSlots()
                         }
                         
                         // Restore all cloud attendance records into local Room database
@@ -838,9 +853,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _syncStatusText.value = "Saving synchronized data to local database..."
 
                     if (batches.isNotEmpty()) {
-                        repository.wipeAllData()
+                        repository.dao.wipeCourses()
+                        repository.dao.wipeStudents()
+                        repository.dao.wipeScheduleSlots()
                         val importData = com.example.data.ImportTimetableData(teacher = null, batches = batches)
                         repository.processTimetableImport(importData)
+                        syncOfficialClassesFromLocalSlots()
                     }
 
                     if (allAttendanceRecords.isNotEmpty()) {
@@ -1543,24 +1561,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             
             val courses = listOf(
                 CourseUpload("CSE-4SEM-A-DBMS", "Database Management Systems", "CS301", 4, listOf(
-                    StudentUpload("S0", "Aman Kumar", "24BCS001", "student.demo@campus.edu"),
+                    StudentUpload("S0_DBMS", "Aman Kumar", "24BCS001", "student.demo@campus.edu"),
                     StudentUpload("S1", "Sakshi Sharma", "24BCS025", "sakshi@campus.edu"),
                     StudentUpload("S2", "Rahul Verma", "24BCS026", "rahul@campus.edu"),
                     StudentUpload("S3", "Priya Singh", "24BCS027", "priya@campus.edu")
                 )),
                 CourseUpload("CSE-4SEM-B-DSA", "Data Structures & Algorithms", "CS302", 4, listOf(
-                    StudentUpload("S0", "Aman Kumar", "24BCS001", "student.demo@campus.edu"),
+                    StudentUpload("S0_DSA", "Aman Kumar", "24BCS001", "student.demo@campus.edu"),
                     StudentUpload("S4", "Amit Kumar", "24BCS028", "amit@campus.edu"),
                     StudentUpload("S5", "Neha Gupta", "24BCS029", "neha@campus.edu")
                 )),
                 CourseUpload("CSE-6SEM-A-OS", "Operating Systems", "CS303", 4, listOf(
-                    StudentUpload("S0", "Aman Kumar", "24BCS001", "student.demo@campus.edu"),
+                    StudentUpload("S0_OS", "Aman Kumar", "24BCS001", "student.demo@campus.edu"),
                     StudentUpload("S6", "Vikram Singh", "24BCS030", "vikram@campus.edu")
                 )),
                 CourseUpload("ECE-4SEM-A-CN", "Computer Networks", "CS304", 4, listOf(
+                    StudentUpload("S0_CN", "Aman Kumar", "24BCS001", "student.demo@campus.edu"),
                     StudentUpload("S7", "Pooja Patel", "24BCS031", "pooja@campus.edu")
                 )),
                 CourseUpload("IT-5SEM-A-SE", "Software Engineering", "CS305", 4, listOf(
+                    StudentUpload("S0_SE", "Aman Kumar", "24BCS001", "student.demo@campus.edu"),
                     StudentUpload("S8", "Arjun Reddy", "24BCS032", "arjun@campus.edu")
                 ))
             )
@@ -1580,14 +1600,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             
             val data = UploadData(courses, weeklySchedule)
             repository.processUploadData(data)
+
+            // Immediately populate official classes for all weekly schedule slots
+            val facultyMap = mapOf(
+                "CSE-4SEM-A-DBMS" to ("Prof. Rajesh Sharma" to "prof.rajesh@campus.edu"),
+                "CSE-4SEM-B-DSA" to ("Dr. Anita Desai" to "anita.desai@campus.edu"),
+                "CSE-6SEM-A-OS" to ("Prof. Sunita Rao" to "sunita.rao@campus.edu"),
+                "ECE-4SEM-A-CN" to ("Dr. Vikram Seth" to "vikram.seth@campus.edu"),
+                "IT-5SEM-A-SE" to ("Prof. Arun Verma" to "arun.verma@campus.edu")
+            )
+            val officialList = weeklySchedule.map { slot ->
+                val course = courses.find { it.id == slot.courseId }
+                val (profName, profEmail) = facultyMap[slot.courseId] ?: ("Prof. Rajesh Sharma" to "prof.rajesh@campus.edu")
+                com.example.data.OfficialClassEntity(
+                    slotId = slot.id,
+                    courseId = slot.courseId,
+                    courseName = course?.name ?: "Subject",
+                    courseCode = course?.code ?: "",
+                    dayOfWeek = slot.dayOfWeek,
+                    startTime = slot.startTime,
+                    endTime = slot.endTime,
+                    room = slot.room,
+                    section = slot.section ?: "A",
+                    facultyName = profName,
+                    facultyEmail = profEmail,
+                    isHidden = false
+                )
+            }
+            repository.insertOfficialClasses(officialList)
+            Log.d("LoadDummyData", "Successfully loaded ${courses.size} courses, ${weeklySchedule.size} slots and ${officialList.size} official classes.")
         } catch (e: Throwable) {
             e.printStackTrace()
         }
     }
 
-    fun loadDummyData() {
+    fun loadDummyData(onComplete: (() -> Unit)? = null) {
         viewModelScope.launch {
             loadDummyDataSuspend()
+            triggerCelebration("All classes loaded for the week ✓")
+            onComplete?.invoke()
         }
     }
 
@@ -1749,12 +1800,52 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 
                 val dummyData = com.example.data.ImportTimetableData(teacher = null, batches = listOf(updatedBatch))
                 repository.processTimetableImport(dummyData)
+
+                // Immediately insert these schedule slots into local official_classes so student feed reflects them instantly
+                val currentAuth = auth
+                val profName = currentAuth?.currentUser?.displayName?.takeIf { it.isNotBlank() } ?: "Prof. Rajesh Sharma"
+                val profEmail = currentAuth?.currentUser?.email?.takeIf { it.isNotBlank() } ?: "faculty@campus.edu"
+                val batchOfficialClasses = updatedBatch.weeklySchedule?.map { s ->
+                    val rawDay = s.day ?: "Monday"
+                    val day = when (rawDay.trim().lowercase()) {
+                        "mon", "monday" -> "Monday"
+                        "tue", "tues", "tuesday" -> "Tuesday"
+                        "wed", "wednesday" -> "Wednesday"
+                        "thu", "thur", "thurs", "thursday" -> "Thursday"
+                        "fri", "friday" -> "Friday"
+                        "sat", "saturday" -> "Saturday"
+                        "sun", "sunday" -> "Sunday"
+                        else -> rawDay.trim().replaceFirstChar { it.uppercase() }
+                    }
+                    val timeString = s.time ?: ""
+                    val loc = s.location?.takeIf { it.isNotBlank() } ?: updatedBatch.location ?: ""
+                    val parts = timeString.split("-").map { it.trim() }
+                    val start = parts.getOrNull(0) ?: timeString
+                    val end = parts.getOrNull(1) ?: ""
+                    val slotId = "slot_${docId}_${day}_${start}_${end}".replace(Regex("[^a-zA-Z0-9_]"), "")
+                    com.example.data.OfficialClassEntity(
+                        slotId = slotId,
+                        courseId = docId,
+                        courseName = updatedBatch.course?.name ?: "",
+                        courseCode = updatedBatch.course?.code ?: "",
+                        dayOfWeek = day,
+                        startTime = start,
+                        endTime = end,
+                        room = loc,
+                        section = updatedBatch.section ?: "",
+                        facultyName = profName,
+                        facultyEmail = profEmail,
+                        isHidden = false
+                    )
+                } ?: emptyList()
+                if (batchOfficialClasses.isNotEmpty()) {
+                    repository.insertOfficialClasses(batchOfficialClasses)
+                }
                 
                 // Return success immediately so the user experiences zero lag!
                 onSuccess()
 
                 // 2. Background cloud sync
-                val currentAuth = auth
                 val currentFirestore = firestore
                 val uid = currentAuth?.currentUser?.uid
 
@@ -1793,7 +1884,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val totalStudents = updatedBatch.students?.size ?: 1
                     updatedBatch.students?.forEachIndexed { idx, student ->
                         val studentId = student.id?.takeIf { it.isNotBlank() } ?: java.util.UUID.randomUUID().toString()
-                        val studentEmail = student.email ?: ""
+                        val studentEmail = student.email?.trim()?.lowercase() ?: ""
                         val studentTask = studentsRef.document(studentId).set(hashMapOf(
                             "id" to studentId,
                             "name" to (student.name ?: ""),
@@ -1836,11 +1927,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                         "endTime" to end,
                                         "room" to loc,
                                         "section" to (updatedBatch.section ?: ""),
-                                        "facultyName" to (currentAuth.currentUser?.displayName ?: "Your Teacher"),
-                                        "facultyEmail" to (currentAuth.currentUser?.email ?: "")
+                                        "facultyName" to (currentAuth?.currentUser?.displayName ?: "Your Teacher"),
+                                        "facultyEmail" to (currentAuth?.currentUser?.email ?: "")
                                     )
-                                    feedRef.document(slotId).set(feedClass)
+                                    feedRef.document(slotId).set(feedClass, com.google.firebase.firestore.SetOptions.merge())
                                 }
+
+                                currentFirestore.collection("student_feed").document(studentEmail).collection("profile").document("info").set(
+                                    hashMapOf(
+                                        "name" to (student.name ?: ""),
+                                        "rollNumber" to (student.rollNumber ?: ""),
+                                        "email" to studentEmail,
+                                        "courseId" to docId,
+                                        "courseName" to (updatedBatch.course?.name ?: "")
+                                    ),
+                                    com.google.firebase.firestore.SetOptions.merge()
+                                )
                             } catch (e: Exception) {
                                 Log.e("FirebaseSync", "Failed to push to student_feed for $studentEmail: ${e.message}")
                             }
@@ -2046,6 +2148,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 repository.saveAttendance(record)
             }
 
+            // Sync with local official_attendance if student has an email
+            val studentObj = repository.getStudentById(studentId)
+            val studentEmail = studentObj?.email?.trim()?.lowercase()
+            val courseObj = if (batchId.isNotBlank()) repository.getCourseById(batchId) else null
+            if (!studentEmail.isNullOrBlank()) {
+                if (status == "NONE") {
+                    repository.deleteOfficialAttendanceForSession(date, slotId)
+                } else {
+                    repository.insertOfficialAttendance(listOf(
+                        com.example.data.OfficialAttendanceEntity(
+                            id = "${date}_${slotId}",
+                            date = date,
+                            slotId = slotId,
+                            courseId = batchId,
+                            courseName = courseObj?.name ?: "",
+                            status = status,
+                            markedAt = System.currentTimeMillis()
+                        )
+                    ))
+                }
+            }
+
             // 2. Background push to Cloud Firestore with progress
             val authUid = auth?.currentUser?.uid
             val db = firestore
@@ -2069,6 +2193,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             "updatedAt" to System.currentTimeMillis()
                         ))
                     }
+
+                    // Push to student_feed
+                    if (!studentEmail.isNullOrBlank()) {
+                        val feedAttDoc = db.collection("student_feed").document(studentEmail)
+                            .collection("attendance").document("${date}_${slotId}")
+                        if (status == "NONE") {
+                            feedAttDoc.delete()
+                        } else {
+                            feedAttDoc.set(hashMapOf(
+                                "id" to "${date}_${slotId}",
+                                "date" to date,
+                                "slotId" to slotId,
+                                "courseId" to batchId,
+                                "courseName" to (courseObj?.name ?: ""),
+                                "status" to status,
+                                "markedAt" to System.currentTimeMillis()
+                            ), com.google.firebase.firestore.SetOptions.merge())
+                        }
+                    }
+
                     triggerCelebration("Attendance saved to Cloud & Device 🎉")
                 } catch (e: Throwable) {
                     Log.w("AttendanceSync", "Cloud write queued: ${e.message}")
@@ -2145,6 +2289,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 repository.saveAttendance(selfRecord)
 
+                // Sync to local official_attendance
+                val courseObj = repository.getCourseById(courseId)
+                repository.insertOfficialAttendance(listOf(
+                    com.example.data.OfficialAttendanceEntity(
+                        id = "${date}_${slotId}",
+                        date = date,
+                        slotId = slotId,
+                        courseId = courseId,
+                        courseName = courseObj?.name ?: "",
+                        status = "CANCELLED",
+                        markedAt = System.currentTimeMillis()
+                    )
+                ))
+
                 val authUid = auth?.currentUser?.uid
                 val db = firestore
                 if (authUid != null && db != null && courseId.isNotBlank()) {
@@ -2160,6 +2318,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             "note" to note,
                             "cancelledAt" to System.currentTimeMillis()
                         ))
+
+                        // Push cancellation to student_feed for all students with email
+                        students.forEach { st ->
+                            val sEmail = st.email?.trim()?.lowercase()
+                            if (!sEmail.isNullOrBlank()) {
+                                db.collection("student_feed").document(sEmail)
+                                    .collection("attendance").document("${date}_${slotId}")
+                                    .set(hashMapOf(
+                                        "id" to "${date}_${slotId}",
+                                        "date" to date,
+                                        "slotId" to slotId,
+                                        "courseId" to courseId,
+                                        "courseName" to (courseObj?.name ?: ""),
+                                        "status" to "CANCELLED",
+                                        "note" to note,
+                                        "markedAt" to System.currentTimeMillis()
+                                    ), com.google.firebase.firestore.SetOptions.merge())
+                            }
+                        }
                     } catch (e: Exception) {
                         Log.w("AttendanceSync", "Failed to sync cancelled session: ${e.message}")
                     }
@@ -2189,6 +2366,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 repository.deleteAttendance(date, slotId, "CANCELLED_SESSION")
                 repository.deleteAttendance(date, slotId, "self")
+                repository.deleteOfficialAttendanceForSession(date, slotId)
+
+                val db = firestore
+                if (db != null) {
+                    students.forEach { st ->
+                        val sEmail = st.email?.trim()?.lowercase()
+                        if (!sEmail.isNullOrBlank()) {
+                            db.collection("student_feed").document(sEmail)
+                                .collection("attendance").document("${date}_${slotId}").delete()
+                        }
+                    }
+                }
+
                 triggerCelebration("Cancelled status cleared")
                 onSuccess()
             } catch (e: Exception) {
@@ -2254,6 +2444,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             repository.saveAttendanceBatch(records)
 
+            // Sync with local official_attendance for students with email
+            val courseObj = if (batchId.isNotBlank()) repository.getCourseById(batchId) else null
+            val officialAttList = mutableListOf<com.example.data.OfficialAttendanceEntity>()
+            studentIds.forEach { studentId ->
+                val student = repository.getStudentById(studentId)
+                val email = student?.email?.trim()?.lowercase()
+                if (!email.isNullOrBlank()) {
+                    officialAttList.add(
+                        com.example.data.OfficialAttendanceEntity(
+                            id = "${date}_${slotId}",
+                            date = date,
+                            slotId = slotId,
+                            courseId = batchId,
+                            courseName = courseObj?.name ?: "",
+                            status = status,
+                            markedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+            if (officialAttList.isNotEmpty()) {
+                repository.insertOfficialAttendance(officialAttList)
+            }
+
             // 2. Background sync
             val authUid = auth?.currentUser?.uid
             val db = firestore
@@ -2281,15 +2495,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     // Push to student_feed
                     studentIds.forEach { studentId ->
                         val student = repository.getStudentById(studentId)
-                        val email = student?.email
+                        val email = student?.email?.trim()?.lowercase()
                         if (!email.isNullOrBlank()) {
                             val feedRef = db.collection("student_feed").document(email).collection("attendance")
                             feedRef.document("${date}_${slotId}").set(hashMapOf(
                                 "id" to "${date}_${slotId}",
                                 "date" to date,
                                 "status" to status,
-                                "slotId" to slotId
-                            ))
+                                "slotId" to slotId,
+                                "courseId" to batchId,
+                                "courseName" to (courseObj?.name ?: ""),
+                                "markedAt" to System.currentTimeMillis()
+                            ), com.google.firebase.firestore.SetOptions.merge())
                         }
                     }
                     
@@ -2354,6 +2571,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     repository.saveAttendanceBatch(toInsert)
                 }
 
+                // Sync with local official_attendance
+                val courseObj = repository.getCourseById(courseId)
+                val officialAttList = mutableListOf<com.example.data.OfficialAttendanceEntity>()
+                attendanceMap.forEach { (studentId, status) ->
+                    val student = repository.getStudentById(studentId)
+                    val email = student?.email?.trim()?.lowercase()
+                    if (!email.isNullOrBlank()) {
+                        if (status == "NONE") {
+                            repository.deleteOfficialAttendanceForSession(date, slotId)
+                        } else {
+                            officialAttList.add(
+                                com.example.data.OfficialAttendanceEntity(
+                                    id = "${date}_${slotId}",
+                                    date = date,
+                                    slotId = slotId,
+                                    courseId = courseId,
+                                    courseName = courseObj?.name ?: "",
+                                    status = status,
+                                    markedAt = System.currentTimeMillis()
+                                )
+                            )
+                        }
+                    }
+                }
+                if (officialAttList.isNotEmpty()) {
+                    repository.insertOfficialAttendance(officialAttList)
+                }
+
                 // Return success immediately so the UI transitions smoothly with ZERO lag!
                 onSuccess()
 
@@ -2391,17 +2636,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         
                         // Push to student_feed
                         attendanceMap.forEach { (studentId, status) ->
-                            if (status != "NONE") {
-                                val student = repository.getStudentById(studentId)
-                                val email = student?.email
-                                if (!email.isNullOrBlank()) {
-                                    val feedRef = db.collection("student_feed").document(email).collection("attendance")
+                            val student = repository.getStudentById(studentId)
+                            val email = student?.email?.trim()?.lowercase()
+                            if (!email.isNullOrBlank()) {
+                                val feedRef = db.collection("student_feed").document(email).collection("attendance")
+                                if (status == "NONE") {
+                                    feedRef.document("${date}_${slotId}").delete()
+                                } else {
                                     feedRef.document("${date}_${slotId}").set(hashMapOf(
                                         "id" to "${date}_${slotId}",
                                         "date" to date,
                                         "status" to status,
-                                        "slotId" to slotId
-                                    ))
+                                        "slotId" to slotId,
+                                        "courseId" to courseId,
+                                        "courseName" to (courseObj?.name ?: ""),
+                                        "markedAt" to System.currentTimeMillis()
+                                    ), com.google.firebase.firestore.SetOptions.merge())
                                 }
                             }
                         }
@@ -2809,11 +3059,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun getStudentEmail(): String {
+        val authEmail = auth?.currentUser?.email?.trim()?.lowercase()
+        if (!authEmail.isNullOrBlank()) return authEmail
         val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
         val saved = prefs.getString("profile_email", null)
         if (!saved.isNullOrBlank()) return saved.trim().lowercase()
-        val authEmail = auth?.currentUser?.email
-        if (!authEmail.isNullOrBlank()) return authEmail.trim().lowercase()
         return if (_isFaculty.value) "prof.rajesh@campus.edu" else "student.demo@campus.edu"
     }
 
@@ -2837,48 +3087,201 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun normalizeDayName(rawDay: String): String {
+        return when (rawDay.trim().lowercase()) {
+            "mon", "monday" -> "Monday"
+            "tue", "tues", "tuesday" -> "Tuesday"
+            "wed", "wednesday" -> "Wednesday"
+            "thu", "thur", "thurs", "thursday" -> "Thursday"
+            "fri", "friday" -> "Friday"
+            "sat", "saturday" -> "Saturday"
+            "sun", "sunday" -> "Sunday"
+            else -> rawDay.trim().replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.ROOT) else it.toString() }
+        }
+    }
+
+    private fun mapDocToOfficialClass(doc: com.google.firebase.firestore.DocumentSnapshot): com.example.data.OfficialClassEntity {
+        val slotId = doc.getString("slotId") ?: doc.id
+        val courseId = doc.getString("courseId") ?: ""
+        val courseName = doc.getString("courseName") ?: "Subject"
+        val courseCode = doc.getString("courseCode") ?: ""
+        val dayOfWeek = normalizeDayName(doc.getString("dayOfWeek") ?: "Wednesday")
+        val startTime = doc.getString("startTime") ?: "02:00 PM"
+        val endTime = doc.getString("endTime") ?: "03:00 PM"
+        val room = doc.getString("room") ?: "Room 204"
+        val section = doc.getString("section") ?: ""
+        val facultyName = doc.getString("facultyName") ?: "Faculty Instructor"
+        val facultyEmail = doc.getString("facultyEmail") ?: ""
+        val isHidden = doc.getBoolean("isHidden") ?: false
+        return com.example.data.OfficialClassEntity(
+            slotId = slotId,
+            courseId = courseId,
+            courseName = courseName,
+            courseCode = courseCode,
+            dayOfWeek = dayOfWeek,
+            startTime = startTime,
+            endTime = endTime,
+            room = room,
+            section = section,
+            facultyName = facultyName,
+            facultyEmail = facultyEmail,
+            isHidden = isHidden
+        )
+    }
+
+    private fun mapDocToOfficialAttendance(doc: com.google.firebase.firestore.DocumentSnapshot): com.example.data.OfficialAttendanceEntity {
+        val id = doc.getString("id") ?: doc.id
+        val date = doc.getString("date") ?: ""
+        val slotId = doc.getString("slotId") ?: ""
+        val courseId = doc.getString("courseId") ?: ""
+        val courseName = doc.getString("courseName") ?: ""
+        val status = doc.getString("status") ?: "P"
+        val markedAt = doc.getLong("markedAt") ?: System.currentTimeMillis()
+        return com.example.data.OfficialAttendanceEntity(
+            id = id,
+            date = date,
+            slotId = slotId,
+            courseId = courseId,
+            courseName = courseName,
+            status = status,
+            markedAt = markedAt
+        )
+    }
+
+    fun registerStudentFeedListeners(email: String) {
+        val db = firestore ?: return
+        if (email.isBlank()) return
+
+        studentFeedClassesListener?.remove()
+        studentFeedClassesListener = db.collection("student_feed").document(email)
+            .collection("official_classes")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.w("StudentFeedListener", "Classes listener error: ${error.message}")
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val classes = snapshot.documents.mapNotNull { doc ->
+                            try { mapDocToOfficialClass(doc) } catch (_: Exception) { null }
+                        }
+                        if (classes.isNotEmpty()) {
+                            repository.insertOfficialClasses(classes)
+                            Log.d("StudentFeedListener", "Live synced ${classes.size} official classes into local Room")
+                        }
+                    }
+                }
+            }
+
+        studentFeedAttendanceListener?.remove()
+        studentFeedAttendanceListener = db.collection("student_feed").document(email)
+            .collection("attendance")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.w("StudentFeedListener", "Attendance listener error: ${error.message}")
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val records = snapshot.documents.mapNotNull { doc ->
+                            try { mapDocToOfficialAttendance(doc) } catch (_: Exception) { null }
+                        }
+                        if (records.isNotEmpty()) {
+                            repository.insertOfficialAttendance(records)
+                            Log.d("StudentFeedListener", "Live synced ${records.size} attendance records into local Room")
+                        }
+                    }
+                }
+            }
+    }
+
+    suspend fun syncOfficialClassesFromLocalSlots() {
+        try {
+            val allCourses = repository.getAllCoursesSync()
+            val allSlots = repository.getAllScheduleSlotsSync()
+
+            if (allCourses.isNotEmpty() && allSlots.isNotEmpty()) {
+                val courseMap = allCourses.associateBy { it.id }
+                val facultyMap = mapOf(
+                    "CSE-4SEM-A-DBMS" to ("Prof. Rajesh Sharma" to "prof.rajesh@campus.edu"),
+                    "CSE-4SEM-B-DSA" to ("Dr. Anita Desai" to "anita.desai@campus.edu"),
+                    "CSE-6SEM-A-OS" to ("Prof. Sunita Rao" to "sunita.rao@campus.edu"),
+                    "ECE-4SEM-A-CN" to ("Dr. Vikram Seth" to "vikram.seth@campus.edu"),
+                    "IT-5SEM-A-SE" to ("Prof. Arun Verma" to "arun.verma@campus.edu")
+                )
+                val currentAuth = auth
+                val profName = currentAuth?.currentUser?.displayName?.takeIf { it.isNotBlank() } ?: "Prof. Rajesh Sharma"
+                val profEmail = currentAuth?.currentUser?.email?.takeIf { it.isNotBlank() } ?: "prof.rajesh@campus.edu"
+                val localOfficialList = allSlots.map { slot ->
+                    val course = courseMap[slot.courseId]
+                    val (fName, fEmail) = facultyMap[slot.courseId] ?: (profName to profEmail)
+                    com.example.data.OfficialClassEntity(
+                        slotId = slot.id,
+                        courseId = slot.courseId,
+                        courseName = course?.name ?: "Subject",
+                        courseCode = course?.code ?: "",
+                        dayOfWeek = normalizeDayName(slot.dayOfWeek),
+                        startTime = slot.startTime,
+                        endTime = slot.endTime,
+                        room = slot.room,
+                        section = slot.section,
+                        facultyName = fName,
+                        facultyEmail = fEmail,
+                        isHidden = false
+                    )
+                }
+                repository.insertOfficialClasses(localOfficialList)
+                Log.d("SyncOfficialClasses", "Inserted ${localOfficialList.size} official classes from local schedule slots")
+            } else {
+                loadDummyDataSuspend()
+            }
+        } catch (e: Exception) {
+            Log.e("SyncOfficialClasses", "Error syncing official classes from local slots: ${e.message}")
+        }
+    }
+
     fun syncOfficialStudentFeed() {
         viewModelScope.launch {
             val email = getStudentEmail().trim().lowercase()
             Log.d("SyncOfficialStudentFeed", "Starting sync for email: $email")
             
-            // 1. Sync from local database if this student is enrolled in courses on device
+            // 1. Sync from local database (guarantee timetable classes are always available in official feed)
+            syncOfficialClassesFromLocalSlots()
             try {
-                val localStudents = repository.getStudentsByEmail(email)
-                if (localStudents.isNotEmpty()) {
-                    val localOfficialList = mutableListOf<com.example.data.OfficialClassEntity>()
-                    localStudents.forEach { st ->
-                        val course = repository.getCourseById(st.courseId)
-                        val slots = repository.getScheduleSlotsForCourseSync(st.courseId)
-                        slots.forEach { slot ->
-                            localOfficialList.add(
-                                com.example.data.OfficialClassEntity(
-                                    slotId = slot.id,
-                                    courseId = st.courseId,
-                                    courseName = course?.name ?: "Course",
-                                    courseCode = course?.code ?: "",
-                                    dayOfWeek = slot.dayOfWeek,
-                                    startTime = slot.startTime,
-                                    endTime = slot.endTime,
-                                    room = slot.room,
-                                    section = slot.section,
-                                    facultyName = "Faculty Instructor",
-                                    facultyEmail = "faculty@campus.edu",
-                                    isHidden = false
+
+                // If any students have this email in the local database, sync their attendance to official_attendance
+                if (email.isNotBlank()) {
+                    val matchingStudents = repository.getStudentsByEmail(email)
+                    if (matchingStudents.isNotEmpty()) {
+                        val attToInsert = mutableListOf<com.example.data.OfficialAttendanceEntity>()
+                        val allCoursesMap = repository.getAllCoursesSync().associateBy { it.id }
+                        matchingStudents.forEach { st ->
+                            val course = allCoursesMap[st.courseId]
+                            val studentAtt = repository.getAttendanceForStudentSync(st.id)
+                            studentAtt.forEach { att ->
+                                attToInsert.add(
+                                    com.example.data.OfficialAttendanceEntity(
+                                        id = "${att.date}_${att.scheduleSlotId}",
+                                        date = att.date,
+                                        slotId = att.scheduleSlotId,
+                                        courseId = st.courseId,
+                                        courseName = course?.name ?: "",
+                                        status = att.status,
+                                        markedAt = att.markedAt
+                                    )
                                 )
-                            )
+                            }
                         }
-                    }
-                    if (localOfficialList.isNotEmpty()) {
-                        repository.insertOfficialClasses(localOfficialList)
-                        Log.d("SyncOfficialStudentFeed", "Enrolled classes found and synced from local DB: ${localOfficialList.size}")
+                        if (attToInsert.isNotEmpty()) {
+                            repository.insertOfficialAttendance(attToInsert)
+                        }
                     }
                 }
             } catch (e: Exception) {
                 Log.e("SyncOfficialStudentFeed", "Local enrolled sync error: ${e.message}")
             }
 
-            // 2. Cloud Firestore student_feed Sync
+            // 2. Cloud Firestore student_feed Sync (Offline cache first + real-time listener)
             val db = firestore
             if (db != null && email.isNotBlank()) {
                 try {
@@ -2887,59 +3290,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     Log.d("SyncOfficialStudentFeed", "Fetched classesSnap, isEmpty: ${classesSnap.isEmpty}")
                     if (!classesSnap.isEmpty) {
                         val officialList = classesSnap.documents.mapNotNull { doc ->
-                            val slotId = doc.getString("slotId") ?: doc.id
-                            val courseId = doc.getString("courseId") ?: ""
-                            val courseName = doc.getString("courseName") ?: "Subject"
-                            val courseCode = doc.getString("courseCode") ?: ""
-                            val dayOfWeek = doc.getString("dayOfWeek") ?: "Wednesday"
-                            val startTime = doc.getString("startTime") ?: "02:00 PM"
-                            val endTime = doc.getString("endTime") ?: "03:00 PM"
-                            val room = doc.getString("room") ?: "Room 204"
-                            val section = doc.getString("section") ?: ""
-                            val facultyName = doc.getString("facultyName") ?: "Faculty Instructor"
-                            val facultyEmail = doc.getString("facultyEmail") ?: ""
-                            com.example.data.OfficialClassEntity(
-                                slotId = slotId,
-                                courseId = courseId,
-                                courseName = courseName,
-                                courseCode = courseCode,
-                                dayOfWeek = dayOfWeek,
-                                startTime = startTime,
-                                endTime = endTime,
-                                room = room,
-                                section = section,
-                                facultyName = facultyName,
-                                facultyEmail = facultyEmail
-                            )
+                            try { mapDocToOfficialClass(doc) } catch (_: Exception) { null }
                         }
-                        repository.insertOfficialClasses(officialList)
+                        if (officialList.isNotEmpty()) {
+                            repository.insertOfficialClasses(officialList)
+                        }
                     }
 
                     val attSnap = db.collection("student_feed").document(email)
                         .collection("attendance").get().await()
                     if (!attSnap.isEmpty) {
                         val attList = attSnap.documents.mapNotNull { doc ->
-                            val id = doc.getString("id") ?: doc.id
-                            val date = doc.getString("date") ?: ""
-                            val slotId = doc.getString("slotId") ?: ""
-                            val courseId = doc.getString("courseId") ?: ""
-                            val courseName = doc.getString("courseName") ?: ""
-                            val status = doc.getString("status") ?: "P"
-                            val markedAt = doc.getLong("markedAt") ?: System.currentTimeMillis()
-                            com.example.data.OfficialAttendanceEntity(
-                                id = id,
-                                date = date,
-                                slotId = slotId,
-                                courseId = courseId,
-                                courseName = courseName,
-                                status = status,
-                                markedAt = markedAt
-                            )
+                            try { mapDocToOfficialAttendance(doc) } catch (_: Exception) { null }
                         }
-                        repository.insertOfficialAttendance(attList)
+                        if (attList.isNotEmpty()) {
+                            repository.insertOfficialAttendance(attList)
+                        }
                     }
+
+                    // Register real-time listeners for live updates from teachers!
+                    registerStudentFeedListeners(email)
                 } catch (e: Exception) {
                     Log.d("OfficialFeed", "Could not sync cloud feed: ${e.message}")
+                    registerStudentFeedListeners(email)
                 }
             }
         }
@@ -2948,75 +3321,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun populateDemoOfficialClassesIfEmpty() {
         val currentOfficial = repository.getActiveOfficialClasses().firstOrNull() ?: emptyList()
         if (currentOfficial.isEmpty()) {
-            val demoClasses = listOf(
-                com.example.data.OfficialClassEntity(
-                    slotId = "official_cs201_wed_2pm",
-                    courseId = "batch_cs201",
-                    courseName = "Data Structures & Algorithms",
-                    courseCode = "CS201",
-                    dayOfWeek = "Wednesday",
-                    startTime = "02:00 PM",
-                    endTime = "03:00 PM",
-                    room = "Room 204",
-                    section = "Section A",
-                    facultyName = "Prof. Rajesh Sharma",
-                    facultyEmail = "prof.rajesh@campus.edu"
-                ),
-                com.example.data.OfficialClassEntity(
-                    slotId = "official_cs202_wed_330pm",
-                    courseId = "batch_cs202",
-                    courseName = "Database Management Systems",
-                    courseCode = "CS202",
-                    dayOfWeek = "Wednesday",
-                    startTime = "03:30 PM",
-                    endTime = "04:30 PM",
-                    room = "Room 108",
-                    section = "Section A",
-                    facultyName = "Prof. Rajesh Sharma",
-                    facultyEmail = "prof.rajesh@campus.edu"
-                ),
-                com.example.data.OfficialClassEntity(
-                    slotId = "official_cs201_fri_10am",
-                    courseId = "batch_cs201",
-                    courseName = "Data Structures & Algorithms",
-                    courseCode = "CS201",
-                    dayOfWeek = "Friday",
-                    startTime = "10:00 AM",
-                    endTime = "11:00 AM",
-                    room = "Room 204",
-                    section = "Section A",
-                    facultyName = "Prof. Rajesh Sharma",
-                    facultyEmail = "prof.rajesh@campus.edu"
-                ),
-                com.example.data.OfficialClassEntity(
-                    slotId = "official_cs202_mon_11am",
-                    courseId = "batch_cs202",
-                    courseName = "Database Management Systems",
-                    courseCode = "CS202",
-                    dayOfWeek = "Monday",
-                    startTime = "11:00 AM",
-                    endTime = "12:00 PM",
-                    room = "Room 108",
-                    section = "Section A",
-                    facultyName = "Prof. Rajesh Sharma",
-                    facultyEmail = "prof.rajesh@campus.edu"
-                )
-            )
-            repository.insertOfficialClasses(demoClasses)
-
-            val todayStr = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE)
-            val demoAttendance = listOf(
-                com.example.data.OfficialAttendanceEntity(
-                    id = "${todayStr}_official_cs201_wed_2pm",
-                    date = todayStr,
-                    slotId = "official_cs201_wed_2pm",
-                    courseId = "batch_cs201",
-                    courseName = "Data Structures & Algorithms",
-                    status = "P",
-                    markedAt = System.currentTimeMillis()
-                )
-            )
-            repository.insertOfficialAttendance(demoAttendance)
+            loadDummyDataSuspend()
         }
     }
 }

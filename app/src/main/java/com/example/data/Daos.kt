@@ -152,6 +152,9 @@ interface AppDao {
     @Query("SELECT * FROM attendance WHERE studentId = :studentId ORDER BY date DESC")
     fun getAttendanceForStudent(studentId: String): Flow<List<AttendanceRecordEntity>>
 
+    @Query("SELECT * FROM attendance WHERE studentId = :studentId ORDER BY date DESC")
+    suspend fun getAttendanceForStudentSync(studentId: String): List<AttendanceRecordEntity>
+
     @Query("SELECT * FROM attendance WHERE studentId = :studentId AND (courseId = :courseId OR scheduleSlotId IN (SELECT id FROM schedule_slots WHERE courseId = :courseId)) ORDER BY date DESC")
     fun getAttendanceForStudentInCourse(studentId: String, courseId: String): Flow<List<AttendanceRecordEntity>>
 
@@ -259,6 +262,9 @@ interface AppDao {
 
     @Query("SELECT * FROM official_attendance")
     fun getAllOfficialAttendance(): Flow<List<OfficialAttendanceEntity>>
+
+    @Query("DELETE FROM official_attendance WHERE date = :date AND slotId = :slotId")
+    suspend fun deleteOfficialAttendanceForSession(date: String, slotId: String)
 
     @Query("DELETE FROM official_attendance")
     suspend fun wipeOfficialAttendance()
