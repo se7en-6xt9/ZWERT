@@ -791,12 +791,72 @@ fun AddEditBatchScreen(
                                                             newStudents[index] = student.copy(email = it)
                                                             students = newStudents
                                                         },
-                                                        label = "Student Email (Optional - for Live ERP Sync)",
+                                                        label = "Campus Email (Required for Student ERP Sync)",
                                                         modifier = Modifier.fillMaxWidth(),
                                                         baseColor = colorScheme.surface,
                                                         accentColor = accentColor,
                                                         haptic = haptic
                                                     )
+                                                    
+                                                    val rawEmail = student.email?.trim() ?: ""
+                                                    if (rawEmail.isBlank()) {
+                                                        Row(
+                                                            modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Icon(
+                                                                Icons.Default.Info,
+                                                                contentDescription = null,
+                                                                tint = Color(0xFFF59E0B),
+                                                                modifier = Modifier.size(13.dp)
+                                                            )
+                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                            Text(
+                                                                "Missing email: Student won't see this in their Official Timetable",
+                                                                fontSize = 11.sp,
+                                                                color = Color(0xFFF59E0B),
+                                                                fontWeight = FontWeight.Medium
+                                                            )
+                                                        }
+                                                    } else if (!rawEmail.contains("@") || !rawEmail.contains(".")) {
+                                                        Row(
+                                                            modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Icon(
+                                                                Icons.Default.Warning,
+                                                                contentDescription = null,
+                                                                tint = Color(0xFFEF4444),
+                                                                modifier = Modifier.size(13.dp)
+                                                            )
+                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                            Text(
+                                                                "Please enter a valid campus email format (e.g. name@campus.edu)",
+                                                                fontSize = 11.sp,
+                                                                color = Color(0xFFEF4444),
+                                                                fontWeight = FontWeight.Medium
+                                                            )
+                                                        }
+                                                    } else {
+                                                        Row(
+                                                            modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Icon(
+                                                                Icons.Default.CheckCircle,
+                                                                contentDescription = null,
+                                                                tint = Color(0xFF10B981),
+                                                                modifier = Modifier.size(13.dp)
+                                                            )
+                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                            Text(
+                                                                "Live ERP sync active for this student",
+                                                                fontSize = 11.sp,
+                                                                color = Color(0xFF10B981),
+                                                                fontWeight = FontWeight.SemiBold
+                                                            )
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -880,7 +940,16 @@ fun AddEditBatchScreen(
                                     batch = finalBatch,
                                     onSuccess = {
                                         isLoading = false
-                                        Toast.makeText(context, "Saved successfully!", Toast.LENGTH_SHORT).show()
+                                        val linkedCount = students.count { !it.email.isNullOrBlank() }
+                                        val unlinkedCount = students.size - linkedCount
+                                        val msg = if (unlinkedCount > 0 && students.isNotEmpty()) {
+                                            "Batch saved! $linkedCount student(s) synced ($unlinkedCount missing email)."
+                                        } else if (linkedCount > 0) {
+                                            "Batch saved! All $linkedCount student(s) synced to official timetable."
+                                        } else {
+                                            "Batch saved successfully!"
+                                        }
+                                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                         navController.popBackStack()
                                     },
                                     onError = { err ->

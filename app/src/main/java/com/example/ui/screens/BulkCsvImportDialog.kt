@@ -601,13 +601,13 @@ fun BulkCsvImportDialog(
                                                 rawCsvText = it
                                                 runParser(it)
                                             },
-                                            label = { Text("Paste CSV Content (e.g. 24BCS001, John Doe)") },
+                                            label = { Text("Paste CSV (Name, Roll, Campus Email)") },
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(160.dp),
                                             shape = RoundedCornerShape(14.dp),
                                             textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 13.sp),
-                                            placeholder = { Text("Roll Number, Student Name\n24BCS001, Aarav Sharma\n24BCS002, Ananya Patel") }
+                                            placeholder = { Text("Roll Number, Student Name, Campus Email\n24BCS001, Aman Kumar, aman.kumar@campus.edu\n24BCS002, Ananya Patel, ananya.patel@campus.edu") }
                                         )
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
@@ -977,15 +977,34 @@ private fun StudentPreviewItem(
                             horizontalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
                             Icon(
-                                Icons.Default.Email,
+                                Icons.Default.CheckCircle,
                                 contentDescription = null,
-                                modifier = Modifier.size(12.dp),
-                                tint = Color(0xFF6366F1)
+                                modifier = Modifier.size(11.dp),
+                                tint = Color(0xFF10B981)
                             )
                             Text(
                                 student.email,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF6366F1),
+                                color = Color(0xFF10B981),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    } else {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Warning,
+                                contentDescription = null,
+                                modifier = Modifier.size(11.dp),
+                                tint = Color(0xFFF59E0B)
+                            )
+                            Text(
+                                "No email (won't sync to student)",
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                color = Color(0xFFF59E0B),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )

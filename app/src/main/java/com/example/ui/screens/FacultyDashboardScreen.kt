@@ -245,6 +245,7 @@ fun DashboardContent(
                                         when (item) {
                                             is ScheduleTimelineItem.SlotItem -> item.slot.id
                                             is ScheduleTimelineItem.BreakItem -> item.id
+                                            is ScheduleTimelineItem.OfficialSlotItem -> item.officialClass.slotId
                                         }
                                     }
                                 ) { index, item ->
@@ -252,6 +253,7 @@ fun DashboardContent(
                                         is ScheduleTimelineItem.BreakItem -> {
                                             ScheduleBreakCard(breakItem = item)
                                         }
+                                        is ScheduleTimelineItem.OfficialSlotItem -> {}
                                         is ScheduleTimelineItem.SlotItem -> {
                                             val slot = item.slot
                                             val isLive = isTodayPage && isSlotLive(slot, currentLiveTime)

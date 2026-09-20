@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 
 object AiHelper {
     private const val TAG = "AiHelper"
-    private const val MODEL_NAME = "gemini-3.6-flash"
+    private val CANDIDATE_MODELS = listOf("gemini-3.5-flash", "gemini-2.5-flash")
     // User-provided Gemini API key fallback
     const val DEFAULT_API_KEY = "AIzaSyDwM0mgO8we85qwh3Uq8QQoQdF1W8oyNBA"
 
@@ -77,7 +77,7 @@ object AiHelper {
                   - "section": Section or Class name (e.g. "CSE-A", "Class 10")
                   - "location": Default classroom/lab or null
                   - "weeklySchedule": Array of weekly class timings (day, time, location)
-                  - "students": Array of student objects { "name": string, "rollNumber": string|null } if a student list is provided; otherwise []
+                  - "students": Array of student objects { "name": string, "rollNumber": string|null, "email": string|null } if a student list is provided; otherwise []. If email is not present in the input, leave email as null.
                 - "teacher": Teacher's own name and ID if mentioned, or null
                 """.trimIndent()
             }
@@ -133,7 +133,7 @@ object AiHelper {
                         { "day": string, "time": string|null, "location": string|null }
                       ],
                       "students": [
-                        { "id": string|null, "name": string, "rollNumber": string|null }
+                        { "id": string|null, "name": string, "rollNumber": string|null, "email": string|null }
                       ]
                     }
                   ],
@@ -141,8 +141,6 @@ object AiHelper {
                   "summary": string
                 }
             """.trimIndent()
-
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_NAME:generateContent?key=$resolvedApiKey"
 
             // Construct JSON request body for Gemini REST API
             val partsArray = JSONArray()
@@ -198,24 +196,22 @@ object AiHelper {
             val mediaType = "application/json; charset=utf-8".toMediaType()
             val requestBody = requestJson.toString().toRequestBody(mediaType)
 
-            val request = Request.Builder()
-                .url(url)
-                .post(requestBody)
-                .build()
-
-            var attempt = 0
-            val maxAttempts = 2
             var lastError: String? = null
 
-            while (attempt < maxAttempts) {
-                attempt++
+            for (model in CANDIDATE_MODELS) {
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$resolvedApiKey"
+                val request = Request.Builder()
+                    .url(url)
+                    .post(requestBody)
+                    .build()
+
                 try {
-                    Log.d(TAG, "Executing Gemini API request (attempt $attempt) with model $MODEL_NAME...")
+                    Log.d(TAG, "Executing Gemini API request with model $model...")
                     val response = client.newCall(request).execute()
                     val responseBody = response.body?.string() ?: ""
 
                     if (!response.isSuccessful) {
-                        val errMsg = "Gemini API HTTP ${response.code}: $responseBody"
+                        val errMsg = "Gemini API HTTP ${response.code} ($model): $responseBody"
                         Log.e(TAG, errMsg)
                         lastError = errMsg
                         continue
@@ -224,7 +220,7 @@ object AiHelper {
                     val jsonResp = JSONObject(responseBody)
                     val candidates = jsonResp.optJSONArray("candidates")
                     if (candidates == null || candidates.length() == 0) {
-                        lastError = "No candidates returned by Gemini"
+                        lastError = "No candidates returned by Gemini ($model)"
                         continue
                     }
 
@@ -251,11 +247,11 @@ object AiHelper {
                         Log.d(TAG, "Gemini timetable extraction successful! Length: ${textOutput.length}")
                         return@withContext textOutput
                     } else {
-                        lastError = "Invalid JSON in output: $textOutput"
+                        lastError = "Invalid JSON in output ($model): $textOutput"
                     }
                 } catch (e: Exception) {
                     lastError = e.message ?: "Network error"
-                    Log.e(TAG, "Error on attempt $attempt: ${e.message}", e)
+                    Log.e(TAG, "Error with model $model: ${e.message}", e)
                 }
             }
 

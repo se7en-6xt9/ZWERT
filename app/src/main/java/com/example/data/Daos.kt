@@ -74,6 +74,9 @@ interface AppDao {
     @Query("SELECT * FROM students WHERE LOWER(TRIM(email)) = LOWER(TRIM(:email))")
     suspend fun getStudentsByEmail(email: String): List<StudentEntity>
 
+    @Query("SELECT * FROM students")
+    suspend fun getAllStudentsSync(): List<StudentEntity>
+
     // ==========================================
     // Schedule Slot Operations
     // ==========================================
@@ -250,6 +253,9 @@ interface AppDao {
 
     @Query("DELETE FROM official_classes WHERE slotId = :slotId")
     suspend fun deleteOfficialClass(slotId: String)
+
+    @Query("DELETE FROM official_classes WHERE courseId = :courseId")
+    suspend fun deleteOfficialClassesByCourseId(courseId: String)
 
     @Query("DELETE FROM official_classes")
     suspend fun wipeOfficialClasses()

@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.example.data.BatchImport
 import com.example.data.CourseImport
@@ -653,7 +655,83 @@ fun ReviewImportData(
 
                         if (!isStudent) {
                             val students = batch.students ?: emptyList()
-                            Text("Enrolled Students: ${students.size}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            val withEmail = students.count { !it.email.isNullOrBlank() }
+                            val missingEmail = students.size - withEmail
+                            var showRoster by remember { mutableStateOf(false) }
+
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text(
+                                                "Enrolled Students: ${students.size}",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            if (students.isNotEmpty()) {
+                                                Text(
+                                                    text = if (missingEmail == 0) "✓ All $withEmail students linked for live sync"
+                                                           else "⚠ $missingEmail student(s) missing campus email",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = if (missingEmail == 0) Color(0xFF10B981) else Color(0xFFF59E0B),
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+                                        if (students.isNotEmpty()) {
+                                            TextButton(
+                                                onClick = { showRoster = !showRoster },
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(if (showRoster) "Hide Roster" else "View / Edit Emails", fontSize = 12.sp)
+                                            }
+                                        }
+                                    }
+
+                                    if (showRoster && students.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        students.forEachIndexed { sIdx, st ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(
+                                                    st.name ?: "Student",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    modifier = Modifier.weight(0.4f),
+                                                    maxLines = 1
+                                                )
+                                                OutlinedTextField(
+                                                    value = st.email ?: "",
+                                                    onValueChange = { newEmail ->
+                                                        val updatedBatches = editableBatches.toMutableList()
+                                                        val updatedStudents = students.toMutableList()
+                                                        updatedStudents[sIdx] = st.copy(email = newEmail)
+                                                        updatedBatches[index] = batch.copy(students = updatedStudents)
+                                                        editableBatches = updatedBatches
+                                                    },
+                                                    placeholder = { Text("Campus email", fontSize = 11.sp) },
+                                                    singleLine = true,
+                                                    modifier = Modifier.weight(0.6f),
+                                                    textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

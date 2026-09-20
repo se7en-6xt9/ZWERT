@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.OfficialClassEntity
 import com.example.data.ScheduleSlotEntity
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -37,6 +38,7 @@ import java.util.Locale
  */
 sealed class ScheduleTimelineItem {
     data class SlotItem(val slot: ScheduleSlotEntity) : ScheduleTimelineItem()
+    data class OfficialSlotItem(val officialClass: OfficialClassEntity) : ScheduleTimelineItem()
     data class BreakItem(
         val id: String,
         val startTime: String,
@@ -124,6 +126,67 @@ fun buildChronologicalTimeline(slots: List<ScheduleSlotEntity>): List<ScheduleTi
                     result.add(
                         ScheduleTimelineItem.BreakItem(
                             id = "break_${currentSlot.id}_${nextSlot.id}",
+                            startTime = startStr,
+                            endTime = endStr,
+                            durationMinutes = gapMinutes,
+                            title = breakTitle,
+                            isLunch = isLunchTime
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    return result
+}
+
+/**
+ * Converts a raw list of OfficialClassEntity into a chronologically sorted timeline
+ * with breaks automatically inserted between classes, identical to personal timetable.
+ */
+fun buildOfficialChronologicalTimeline(classes: List<OfficialClassEntity>): List<ScheduleTimelineItem> {
+    if (classes.isEmpty()) return emptyList()
+
+    // 1. Sort classes in strictly increasing order of start time
+    val sortedClasses = classes.sortedWith(Comparator { c1, c2 ->
+        val t1 = parseSlotTime(c1.startTime)
+        val t2 = parseSlotTime(c2.startTime)
+        when {
+            t1 != null && t2 != null -> t1.compareTo(t2)
+            t1 != null -> -1
+            t2 != null -> 1
+            else -> c1.startTime.compareTo(c2.startTime)
+        }
+    })
+
+    val result = mutableListOf<ScheduleTimelineItem>()
+
+    for (i in sortedClasses.indices) {
+        val current = sortedClasses[i]
+        result.add(ScheduleTimelineItem.OfficialSlotItem(current))
+
+        // Check gap with next class
+        if (i < sortedClasses.size - 1) {
+            val next = sortedClasses[i + 1]
+            val currentEnd = parseSlotTime(current.endTime)
+            val nextStart = parseSlotTime(next.startTime)
+
+            if (currentEnd != null && nextStart != null && nextStart.isAfter(currentEnd)) {
+                val gapMinutes = java.time.Duration.between(currentEnd, nextStart).toMinutes()
+
+                // If gap is 15 minutes or more, insert a Break Card
+                if (gapMinutes >= 15) {
+                    val isLunchTime = (currentEnd.hour in 11..14) || (nextStart.hour in 12..15) || gapMinutes >= 45
+                    val breakTitle = if (isLunchTime) "Lunch & Refreshment Break" else "Short Recess / Break"
+
+                    val timeFormatter = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)
+                    val startStr = currentEnd.format(timeFormatter)
+                    val endStr = nextStart.format(timeFormatter)
+
+                    result.add(
+                        ScheduleTimelineItem.BreakItem(
+                            id = "break_official_${current.slotId}_${next.slotId}",
                             startTime = startStr,
                             endTime = endStr,
                             durationMinutes = gapMinutes,

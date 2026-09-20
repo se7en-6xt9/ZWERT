@@ -3,9 +3,11 @@ import com.example.models.UploadData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 class Repository(val dao: AppDao) {
-    suspend fun processUploadData(data: UploadData) {
+    suspend fun processUploadData(data: UploadData, wipeExisting: Boolean = false) {
         withContext(Dispatchers.IO) {
-            dao.wipeAllData()
+            if (wipeExisting) {
+                dao.wipeAllData()
+            }
             val courses = data.courses.map { CourseEntity(it.id, it.name, it.code, it.credits) }
             dao.insertCourses(courses)
             val students = data.courses.flatMap { course ->
@@ -172,6 +174,15 @@ class Repository(val dao: AppDao) {
     suspend fun deleteOfficialClass(slotId: String) = withContext(Dispatchers.IO) {
         dao.deleteOfficialClass(slotId)
     }
+    suspend fun wipeOfficialClasses() = withContext(Dispatchers.IO) {
+        dao.wipeOfficialClasses()
+    }
+    suspend fun deleteOfficialClassesByCourseId(courseId: String) = withContext(Dispatchers.IO) {
+        dao.deleteOfficialClassesByCourseId(courseId)
+    }
+    suspend fun getAllStudentsSync() = withContext(Dispatchers.IO) {
+        dao.getAllStudentsSync()
+    }
 
     // Official Attendance
     fun getAllOfficialAttendance() = dao.getAllOfficialAttendance()
@@ -180,5 +191,8 @@ class Repository(val dao: AppDao) {
     }
     suspend fun deleteOfficialAttendanceForSession(date: String, slotId: String) = withContext(Dispatchers.IO) {
         dao.deleteOfficialAttendanceForSession(date, slotId)
+    }
+    suspend fun wipeOfficialAttendance() = withContext(Dispatchers.IO) {
+        dao.wipeOfficialAttendance()
     }
 }
