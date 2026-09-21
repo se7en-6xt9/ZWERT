@@ -190,6 +190,12 @@ fun StudentDashboardContent(
                         if (cleaned.isNotBlank()) {
                             studentEmail = cleaned
                             viewModel.setStudentEmail(cleaned)
+                            coroutineScope.launch {
+                                viewModel.syncOfficialClassesFromLocalSlots()
+                                viewModel.syncOfficialStudentFeed { msg, _ ->
+                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            }
                         }
                         showEditEmailDialog = false
                     }
@@ -356,7 +362,14 @@ fun StudentDashboardContent(
                                     personalClassCount = scheduleSlots.size,
                                     totalOfficialClassesCount = officialClasses.size,
                                     onSwitchToPersonal = { timetableMode = "PERSONAL" },
-                                    onSync = { viewModel.syncOfficialStudentFeed() },
+                                    onSync = {
+                                        coroutineScope.launch {
+                                            viewModel.syncOfficialClassesFromLocalSlots()
+                                            viewModel.syncOfficialStudentFeed { msg, _ ->
+                                                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    },
                                     onChangeEmail = { showEditEmailDialog = true },
                                     onLoadDemo = {
                                         viewModel.loadDummyData()

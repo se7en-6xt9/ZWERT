@@ -1907,6 +1907,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 } ?: emptyList()
                 val currentStudentEmail = getStudentEmail().trim().lowercase()
+                val hasEnrolledStudents = updatedBatch.students?.any { !it.email.isNullOrBlank() } == true
                 val isEnrolled = updatedBatch.students?.any { s ->
                     val sEmail = s.email?.trim()?.lowercase() ?: ""
                     val sName = s.name?.trim()?.lowercase() ?: ""
@@ -1917,9 +1918,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     (currentStudentEmail.isNotBlank() && sEmail == currentStudentEmail)
                 } == true
 
-                if (isEnrolled && batchOfficialClasses.isNotEmpty()) {
+                if ((hasEnrolledStudents || isEnrolled) && batchOfficialClasses.isNotEmpty()) {
                     repository.insertOfficialClasses(batchOfficialClasses)
-                    Log.d("SaveSingleBatch", "Inserted ${batchOfficialClasses.size} official classes for student feed!")
+                    Log.d("ERPSync", "Local DB: Inserted ${batchOfficialClasses.size} official classes for batch $docId")
                 }
                 
                 // Return success immediately so the user experiences zero lag!
@@ -1928,11 +1929,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // 2. Background cloud sync
                 val currentFirestore = firestore
                 val uid = currentAuth?.currentUser?.uid
+                val effectiveUid = uid ?: "faculty_local"
 
-                if (currentFirestore != null && uid != null) {
+                if (currentFirestore != null) {
                     _syncProgress.value = 0.3f
                     _syncStatusText.value = "Saving class to Cloud in background..."
-                    val batchRef = currentFirestore.collection("users").document(uid).collection("batches").document(docId)
+                    val batchRef = currentFirestore.collection("users").document(effectiveUid).collection("batches").document(docId)
                     val scheduleList = updatedBatch.weeklySchedule?.map { s ->
                         hashMapOf(
                             "day" to (s.day ?: ""),
@@ -1953,9 +1955,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "location" to (updatedBatch.location ?: ""),
                         "weeklySchedule" to scheduleList
                     )
-                    val setTask = batchRef.set(batchMeta)
                     try {
-                        kotlinx.coroutines.withTimeout(1500L) { setTask.await() }
+                        val setTask = batchRef.set(batchMeta)
+                        kotlinx.coroutines.withTimeout(2000L) { setTask.await() }
                     } catch (e: Exception) {
                         Log.d("FirebaseSync", "Batch $docId saved in offline persistent cache: ${e.message}")
                     }
@@ -1972,7 +1974,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             "email" to studentEmail
                         ))
                         try {
-                            kotlinx.coroutines.withTimeout(500L) { studentTask.await() }
+                            kotlinx.coroutines.withTimeout(1000L) { studentTask.await() }
                         } catch (_: Exception) {}
                         
                         if (studentEmail.isNotBlank()) {
@@ -2007,10 +2009,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                         "endTime" to end,
                                         "room" to loc,
                                         "section" to (updatedBatch.section ?: ""),
-                                        "facultyName" to (currentAuth?.currentUser?.displayName ?: "Your Teacher"),
-                                        "facultyEmail" to (currentAuth?.currentUser?.email ?: "")
+                                        "facultyName" to (currentAuth?.currentUser?.displayName ?: "Prof. Rajesh Sharma"),
+                                        "facultyEmail" to (currentAuth?.currentUser?.email ?: "faculty@campus.edu")
                                     )
-                                    feedRef.document(slotId).set(feedClass, com.google.firebase.firestore.SetOptions.merge())
+                                    Log.d("ERPSync", "Attempting write to student_feed/$studentEmail/official_classes/$slotId")
+                                    try {
+                                        val writeTask = feedRef.document(slotId).set(feedClass, com.google.firebase.firestore.SetOptions.merge())
+                                        kotlinx.coroutines.withTimeout(2500L) { writeTask.await() }
+                                        Log.d("ERPSync", "Write result: SUCCESS for $slotId to student_feed/$studentEmail")
+                                    } catch (writeEx: Exception) {
+                                        Log.e("ERPSync", "Write result: FAILED for $slotId to student_feed/$studentEmail: ${writeEx.message}", writeEx)
+                                    }
                                 }
 
                                 currentFirestore.collection("student_feed").document(studentEmail).collection("profile").document("info").set(
@@ -2024,7 +2033,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     com.google.firebase.firestore.SetOptions.merge()
                                 )
                             } catch (e: Exception) {
-                                Log.e("FirebaseSync", "Failed to push to student_feed for $studentEmail: ${e.message}")
+                                Log.e("ERPSync", "Failed to push to student_feed for $studentEmail: ${e.message}", e)
                             }
                         }
                         
@@ -3326,7 +3335,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    suspend fun syncOfficialClassesFromLocalSlots() {
+    suspend fun syncOfficialClassesFromLocalSlots(): Int {
         try {
             val email = getStudentEmail().trim().lowercase()
             val cleanEmail = if (email.isNotBlank()) email else "student.demo@campus.edu"
@@ -3339,6 +3348,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val sName = s.name.trim().lowercase()
                 val sRoll = s.rollNumber.trim().lowercase()
                 (cleanEmail.isNotBlank() && sEmail == cleanEmail) ||
+                (cleanEmail.isNotBlank() && cleanEmail.contains(sRoll) && sRoll.isNotBlank()) ||
                 (isDemo && (sEmail == "student.demo@campus.edu" || sEmail.contains("demo") || sName.contains("aman") || sRoll == "24bcs001")) ||
                 (sEmail == "student.demo@campus.edu") ||
                 (sName == "aman kumar") ||
@@ -3375,24 +3385,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                     repository.insertOfficialClasses(localOfficialList)
-                    Log.d("SyncOfficialClasses", "Inserted ${localOfficialList.size} official classes from local slots for student $cleanEmail")
+                    Log.d("ERPSync", "Local DB: Inserted ${localOfficialList.size} official classes from local slots for student $cleanEmail")
+                    return localOfficialList.size
                 }
             } else {
-                Log.d("SyncOfficialClasses", "Student $cleanEmail is not locally enrolled, awaiting cloud official feed.")
+                Log.d("ERPSync", "Student $cleanEmail is not locally enrolled, awaiting cloud official feed.")
             }
         } catch (e: Exception) {
-            Log.e("SyncOfficialClasses", "Error syncing official classes from local slots: ${e.message}")
+            Log.e("ERPSync", "Error syncing official classes from local slots: ${e.message}", e)
         }
+        return 0
     }
 
-    fun syncOfficialStudentFeed() {
+    fun syncOfficialStudentFeed(onResult: ((message: String, isSuccess: Boolean) -> Unit)? = null) {
         viewModelScope.launch {
             val email = getStudentEmail().trim().lowercase()
             val cleanEmail = if (email.isNotBlank()) email else "student.demo@campus.edu"
-            Log.d("SyncOfficialStudentFeed", "Starting sync for email: $cleanEmail")
+            Log.d("ERPSync", "Student syncFeed: starting sync for email: $cleanEmail")
             
             // 1. Sync from local database (guarantee timetable classes are always available in official feed)
-            syncOfficialClassesFromLocalSlots()
+            val localCount = syncOfficialClassesFromLocalSlots()
             try {
                 // If any students match in the local database, sync their attendance to official_attendance
                 val allStudents = repository.getAllStudentsSync()
@@ -3431,11 +3443,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             } catch (e: Exception) {
-                Log.e("SyncOfficialStudentFeed", "Local enrolled sync error: ${e.message}")
+                Log.e("ERPSync", "Local enrolled sync error: ${e.message}")
             }
 
             // 2. Cloud Firestore student_feed Sync (Offline cache first + real-time listener)
             val db = firestore
+            var cloudFetchedCount = 0
+            var errorMsg: String? = null
+
             if (db != null && cleanEmail.isNotBlank()) {
                 val targetEmails = mutableSetOf(cleanEmail)
                 if (cleanEmail == "student.demo@campus.edu" || cleanEmail.contains("aman") || cleanEmail.contains("demo")) {
@@ -3445,20 +3460,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 for (targetEmail in targetEmails) {
                     try {
-                        val classesSnap = db.collection("student_feed").document(targetEmail)
-                            .collection("official_classes").get().await()
-                        Log.d("SyncOfficialStudentFeed", "Fetched classesSnap for $targetEmail, isEmpty: ${classesSnap.isEmpty}")
+                        Log.d("ERPSync", "Attempting read from student_feed/$targetEmail/official_classes")
+                        val classesSnap = kotlinx.coroutines.withTimeout(4000L) {
+                            db.collection("student_feed").document(targetEmail)
+                                .collection("official_classes").get().await()
+                        }
+                        Log.d("ERPSync", "Read result: fetched ${classesSnap.size()} documents from student_feed/$targetEmail")
                         if (!classesSnap.isEmpty) {
                             val officialList = classesSnap.documents.mapNotNull { doc ->
                                 try { mapDocToOfficialClass(doc) } catch (_: Exception) { null }
                             }
                             if (officialList.isNotEmpty()) {
                                 repository.insertOfficialClasses(officialList)
+                                cloudFetchedCount += officialList.size
                             }
                         }
 
-                        val attSnap = db.collection("student_feed").document(targetEmail)
-                            .collection("attendance").get().await()
+                        val attSnap = kotlinx.coroutines.withTimeout(4000L) {
+                            db.collection("student_feed").document(targetEmail)
+                                .collection("attendance").get().await()
+                        }
                         if (!attSnap.isEmpty) {
                             val attList = attSnap.documents.mapNotNull { doc ->
                                 try { mapDocToOfficialAttendance(doc) } catch (_: Exception) { null }
@@ -3471,10 +3492,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         // Register real-time listeners for live updates from teachers!
                         registerStudentFeedListeners(targetEmail)
                     } catch (e: Exception) {
-                        Log.d("OfficialFeed", "Could not sync cloud feed for $targetEmail: ${e.message}")
+                        Log.d("ERPSync", "Cloud feed check for $targetEmail: ${e.message}")
+                        errorMsg = e.message
                         registerStudentFeedListeners(targetEmail)
                     }
                 }
+            }
+
+            // Provide clear status feedback
+            if (cloudFetchedCount > 0) {
+                onResult?.invoke("✓ Synced $cloudFetchedCount classes from faculty cloud feed!", true)
+            } else if (localCount > 0) {
+                onResult?.invoke("✓ Loaded $localCount classes from your campus roster.", true)
+            } else if (errorMsg != null) {
+                onResult?.invoke("Sync notice: $errorMsg", false)
+            } else {
+                onResult?.invoke("No official classes found yet for $cleanEmail", false)
             }
         }
     }

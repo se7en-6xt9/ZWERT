@@ -845,14 +845,14 @@ fun AddEditBatchScreen(
                                                             Icon(
                                                                 Icons.Default.CheckCircle,
                                                                 contentDescription = null,
-                                                                tint = Color(0xFF10B981),
+                                                                tint = Color(0xFF059669),
                                                                 modifier = Modifier.size(13.dp)
                                                             )
                                                             Spacer(modifier = Modifier.width(4.dp))
                                                             Text(
-                                                                "Live ERP sync active for this student",
+                                                                if (batchId != null) "Campus email verified • Syncs to student feed on Save" else "Campus email verified • Will link to student feed on Save",
                                                                 fontSize = 11.sp,
-                                                                color = Color(0xFF10B981),
+                                                                color = Color(0xFF059669),
                                                                 fontWeight = FontWeight.SemiBold
                                                             )
                                                         }
