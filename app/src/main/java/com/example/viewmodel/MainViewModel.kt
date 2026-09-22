@@ -1517,6 +1517,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (slots.isEmpty()) {
                     loadDummyDataSuspend()
                 }
+                seedDemoOfficialAttendanceRecordsIfEmpty()
 
                 try {
                     auth?.signInAnonymously()?.await()
@@ -1562,6 +1563,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val existingSlots = repository.getAllScheduleSlotsSync()
             if (existingSlots.isNotEmpty()) {
                 syncOfficialClassesFromLocalSlots()
+                seedDemoOfficialAttendanceRecordsIfEmpty()
                 return
             }
             val days = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -1572,6 +1574,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     StudentUpload("S1", "Sakshi Sharma", "24BCS025", "sakshi@campus.edu"),
                     StudentUpload("S2", "Rahul Verma", "24BCS026", "rahul@campus.edu"),
                     StudentUpload("S3", "Priya Singh", "24BCS027", "priya@campus.edu")
+                )),
+                CourseUpload("CSE-4SEM-A-AI", "Artificial Intelligence & ML", "CS401", 4, listOf(
+                    StudentUpload("S0_AI", "Aman Kumar", "24BCS001", "student.demo@campus.edu"),
+                    StudentUpload("S1_AI", "Sakshi Sharma", "24BCS025", "sakshi@campus.edu"),
+                    StudentUpload("S2_AI", "Rahul Verma", "24BCS026", "rahul@campus.edu"),
+                    StudentUpload("S3_AI", "Priya Singh", "24BCS027", "priya@campus.edu")
                 )),
                 CourseUpload("CSE-4SEM-B-DSA", "Data Structures & Algorithms", "CS302", 4, listOf(
                     StudentUpload("S0_DSA", "Aman Kumar", "24BCS001", "student.demo@campus.edu"),
@@ -1596,13 +1604,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var slotIdCounter = 1
 
             for (day in days) {
-                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-4SEM-A-DBMS", day, "09:00", "10:30", "Room 401", "A"))
-                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-4SEM-B-DSA", day, "10:30", "11:30", "Lab 2", "B"))
-                // Break 11:30 - 12:00
-                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-6SEM-A-OS", day, "12:00", "13:30", "Room 305", "A"))
-                // Break 13:30 - 14:30
-                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "ECE-4SEM-A-CN", day, "14:30", "15:30", "Lab 1", "C"))
-                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "IT-5SEM-A-SE", day, "15:30", "17:00", "Room 201", "A"))
+                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-4SEM-A-DBMS", day, "09:00", "10:30", "Room 401", "Sec A"))
+                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-4SEM-A-AI", day, "10:30", "11:30", "AI Lab 2", "Sec A"))
+                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-4SEM-B-DSA", day, "11:30", "12:30", "Lab 2", "Sec B"))
+                // Break 12:30 - 13:30
+                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "CSE-6SEM-A-OS", day, "13:30", "14:30", "Room 305", "Sec A"))
+                // Break 14:30 - 15:00
+                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "ECE-4SEM-A-CN", day, "15:00", "16:00", "Lab 1", "Sec C"))
+                weeklySchedule.add(ScheduleSlotUpload("slot_${slotIdCounter++}", "IT-5SEM-A-SE", day, "16:00", "17:00", "Room 201", "Sec A"))
             }
             
             val data = UploadData(courses, weeklySchedule)
@@ -1611,6 +1620,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Immediately populate official classes for all weekly schedule slots
             val facultyMap = mapOf(
                 "CSE-4SEM-A-DBMS" to ("Prof. Rajesh Sharma" to "prof.rajesh@campus.edu"),
+                "CSE-4SEM-A-AI" to ("Prof. Rajesh Sharma" to "prof.rajesh@campus.edu"),
                 "CSE-4SEM-B-DSA" to ("Dr. Anita Desai" to "anita.desai@campus.edu"),
                 "CSE-6SEM-A-OS" to ("Prof. Sunita Rao" to "sunita.rao@campus.edu"),
                 "ECE-4SEM-A-CN" to ("Dr. Vikram Seth" to "vikram.seth@campus.edu"),
@@ -1628,13 +1638,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     startTime = slot.startTime,
                     endTime = slot.endTime,
                     room = slot.room,
-                    section = slot.section ?: "A",
+                    section = slot.section ?: "Sec A",
                     facultyName = profName,
                     facultyEmail = profEmail,
                     isHidden = false
                 )
             }
             repository.insertOfficialClasses(officialList)
+            seedDemoOfficialAttendanceRecordsIfEmpty()
             Log.d("LoadDummyData", "Successfully loaded ${courses.size} courses, ${weeklySchedule.size} slots and ${officialList.size} official classes.")
         } catch (e: Throwable) {
             e.printStackTrace()
@@ -3203,8 +3214,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setStudentEmail(email: String) {
         val cleanEmail = email.trim().lowercase()
+        val isDemo = (cleanEmail == "student.demo@campus.edu")
         val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putString("profile_email", cleanEmail).apply()
+        prefs.edit()
+            .putString("profile_email", cleanEmail)
+            .putBoolean("is_demo_account", isDemo)
+            .apply()
         viewModelScope.launch {
             // Isolate data by wiping previous cached official data before syncing for new email
             repository.wipeOfficialClasses()
@@ -3512,16 +3527,130 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    suspend fun populateDemoOfficialClassesIfEmpty() {
-        // 1. First attempt to populate from any local batches (e.g. M3 created by teacher)
-        syncOfficialClassesFromLocalSlots()
-        val currentOfficial = repository.getActiveOfficialClasses().firstOrNull() ?: emptyList()
-        if (currentOfficial.isNotEmpty()) return
+    suspend fun seedDemoOfficialAttendanceRecordsIfEmpty() {
+        try {
+            val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+            val isDemo = prefs.getBoolean("is_demo_account", false) || 
+                         getStudentEmail().trim().lowercase() == "student.demo@campus.edu" ||
+                         _userProfile.value?.role == "student" ||
+                         _userProfile.value?.role == "teacher"
 
-        // 2. Only if the entire schedule table is empty, load dummy initial demo data
+            val currentEmail = getStudentEmail().trim().lowercase()
+            // STRICT DATA ISOLATION: Never seed demo attendance into non-demo personal accounts
+            if (!isDemo && currentEmail.isNotBlank() && currentEmail != "student.demo@campus.edu") {
+                return
+            }
+
+            val existingOfficialAtt = repository.getAllOfficialAttendance().firstOrNull() ?: emptyList()
+            if (existingOfficialAtt.isNotEmpty()) {
+                return
+            }
+
+            val allCourses = repository.getAllCoursesSync()
+            val allSlots = repository.getAllScheduleSlotsSync()
+            val allStudents = repository.getAllStudentsSync()
+
+            if (allCourses.isEmpty() || allSlots.isEmpty()) {
+                return
+            }
+
+            val demoStudents = allStudents.filter {
+                val email = it.email.trim().lowercase()
+                val roll = it.rollNumber.trim().lowercase()
+                email == "student.demo@campus.edu" || roll == "24bcs001" || it.name.contains("Aman", ignoreCase = true)
+            }
+
+            val courseMap = allCourses.associateBy { it.id }
+            val studentByCourse = demoStudents.associateBy { it.courseId }
+            
+            val officialAttList = mutableListOf<com.example.data.OfficialAttendanceEntity>()
+            val teacherAttList = mutableListOf<AttendanceRecordEntity>()
+            val today = LocalDate.now()
+            val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+
+            // Seed 14 days of realistic sessions
+            for (i in 0..13) {
+                val pastDate = today.minusDays(i.toLong())
+                val dayName = pastDate.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH)
+                val dateStr = pastDate.format(dateFormatter)
+                
+                // Skip Sunday for attendance
+                if (pastDate.dayOfWeek.value == 7) continue
+
+                val slotsForDay = allSlots.filter { it.dayOfWeek.equals(dayName, ignoreCase = true) }
+                slotsForDay.forEachIndexed { slotIdx, slot ->
+                    val course = courseMap[slot.courseId]
+                    val demoStudent = studentByCourse[slot.courseId]
+                    
+                    // Generate realistic status: mostly Present, with occasional Absent or Cancelled
+                    val status = when {
+                        (i + slotIdx) % 11 == 0 -> "CANCELLED"
+                        (i + slotIdx) % 7 == 3 -> "A"
+                        else -> "P"
+                    }
+
+                    val markedTime = System.currentTimeMillis() - (i * 86400000L) + (slotIdx * 3600000L)
+
+                    // 1. Official Attendance (For Student ERP view)
+                    officialAttList.add(
+                        com.example.data.OfficialAttendanceEntity(
+                            id = "${dateStr}_${slot.id}",
+                            date = dateStr,
+                            slotId = slot.id,
+                            courseId = slot.courseId,
+                            courseName = course?.name ?: "Subject",
+                            status = status,
+                            markedAt = markedTime
+                        )
+                    )
+
+                    // 2. Teacher Attendance Record (For Teacher view)
+                    if (demoStudent != null) {
+                        teacherAttList.add(
+                            AttendanceRecordEntity(
+                                date = dateStr,
+                                scheduleSlotId = slot.id,
+                                studentId = demoStudent.id,
+                                status = status,
+                                sessionId = "OFFICIAL_${dateStr}_${slot.id}",
+                                courseId = slot.courseId,
+                                userId = "demo_faculty",
+                                markedAt = markedTime
+                            )
+                        )
+                    }
+                }
+            }
+
+            if (officialAttList.isNotEmpty()) {
+                repository.insertOfficialAttendance(officialAttList)
+            }
+            if (teacherAttList.isNotEmpty()) {
+                repository.saveAttendanceBatch(teacherAttList)
+            }
+            Log.d("DemoSeed", "Seeded ${officialAttList.size} demo official attendance records for student.demo@campus.edu")
+        } catch (e: Exception) {
+            Log.e("DemoSeed", "Error seeding demo official attendance: ${e.message}", e)
+        }
+    }
+
+    suspend fun populateDemoOfficialClassesIfEmpty() {
+        val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+        val isDemo = prefs.getBoolean("is_demo_account", false) || 
+                     getStudentEmail().trim().lowercase() == "student.demo@campus.edu" ||
+                     _userProfile.value?.role == "student" ||
+                     _userProfile.value?.role == "teacher"
+        if (!isDemo) return // STRICT DATA ISOLATION: Never run for real non-demo accounts!
+
+        // 1. If slots are empty, load dummy initial demo data
         val existingSlots = repository.getAllScheduleSlotsSync()
         if (existingSlots.isEmpty()) {
             loadDummyDataSuspend()
+        } else {
+            syncOfficialClassesFromLocalSlots()
         }
+
+        // 2. Seed official attendance records for the demo student if empty
+        seedDemoOfficialAttendanceRecordsIfEmpty()
     }
 }

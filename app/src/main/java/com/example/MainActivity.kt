@@ -106,6 +106,9 @@ class MainActivity : ComponentActivity() {
                         composable("student_report") {
                             com.example.ui.screens.StudentAttendanceReportScreen(navController = navController, viewModel = viewModel)
                         }
+                        composable("official_report") {
+                            com.example.ui.screens.OfficialAttendanceReportScreen(navController = navController, viewModel = viewModel)
+                        }
                         composable("student_subject_detail/{courseId}") { backStackEntry ->
                             val courseId = backStackEntry.arguments?.getString("courseId") ?: return@composable
                             com.example.ui.screens.StudentSubjectDetailScreen(navController = navController, viewModel = viewModel, courseId = courseId)
