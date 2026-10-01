@@ -446,10 +446,10 @@ fun StudentAttendanceReportScreen(
                                     ) {
                                         Text(
                                             text = when {
-                                                overallTotal == 0 -> "No sessions yet"
-                                                overallPct >= 75f -> "Eligible (≥75%)"
-                                                overallPct >= 50f -> "Borderline"
-                                                else -> "Shortage Alert"
+                                                overallTotal == 0 -> "No Classes Recorded"
+                                                overallPct >= 75f -> "Exam Eligible • Safe Zone"
+                                                overallPct >= 50f -> "Low Attendance • Warning"
+                                                else -> "Shortage Alert • Ineligible"
                                             },
                                             color = overallColor,
                                             fontWeight = FontWeight.ExtraBold,

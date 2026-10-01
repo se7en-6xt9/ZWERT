@@ -184,15 +184,35 @@ class Repository(val dao: AppDao) {
         dao.getAllStudentsSync()
     }
 
+    suspend fun getOfficialClassByCourseId(courseId: String) = withContext(Dispatchers.IO) {
+        dao.getOfficialClassByCourseId(courseId)
+    }
+
+    suspend fun getAllOfficialClassesSync(): List<OfficialClassEntity> = withContext(Dispatchers.IO) {
+        dao.getAllOfficialClassesSync()
+    }
+
     // Official Attendance
     fun getAllOfficialAttendance() = dao.getAllOfficialAttendance()
+    suspend fun getAllOfficialAttendanceSync(): List<OfficialAttendanceEntity> = withContext(Dispatchers.IO) {
+        dao.getAllOfficialAttendanceSync()
+    }
     suspend fun insertOfficialAttendance(records: List<OfficialAttendanceEntity>) = withContext(Dispatchers.IO) {
         dao.insertOfficialAttendance(records)
+    }
+    suspend fun deleteOfficialAttendanceById(id: String) = withContext(Dispatchers.IO) {
+        dao.deleteOfficialAttendanceById(id)
     }
     suspend fun deleteOfficialAttendanceForSession(date: String, slotId: String) = withContext(Dispatchers.IO) {
         dao.deleteOfficialAttendanceForSession(date, slotId)
     }
+    suspend fun deleteOfficialAttendanceByCourseId(courseId: String) = withContext(Dispatchers.IO) {
+        dao.deleteOfficialAttendanceByCourseId(courseId)
+    }
     suspend fun wipeOfficialAttendance() = withContext(Dispatchers.IO) {
         dao.wipeOfficialAttendance()
+    }
+    suspend fun wipeStudentPersonalData() = withContext(Dispatchers.IO) {
+        dao.wipeStudentPersonalData()
     }
 }

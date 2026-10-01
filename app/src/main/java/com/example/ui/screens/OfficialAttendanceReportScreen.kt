@@ -450,38 +450,41 @@ fun OfficialAttendanceReportScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 12.dp)
+                            ) {
+                                Text(
+                                    text = if (overallTotal > 0) "${String.format(Locale.ENGLISH, "%.1f", animatedOverallPct)}%" else "—",
+                                    style = MaterialTheme.typography.headlineLarge.copy(fontSize = 32.sp),
+                                    fontWeight = FontWeight.Black,
+                                    color = overallColor
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = overallColor.copy(alpha = 0.14f),
+                                    border = BorderStroke(0.8.dp, overallColor.copy(alpha = 0.32f))
+                                ) {
                                     Text(
-                                        text = if (overallTotal > 0) "${String.format(Locale.ENGLISH, "%.1f", animatedOverallPct)}%" else "—",
-                                        style = MaterialTheme.typography.headlineMedium,
-                                        fontWeight = FontWeight.Black,
-                                        color = overallColor
+                                        text = when {
+                                            overallTotal == 0 -> "No Classes Held Yet"
+                                            overallPct >= 75f -> "Exam Eligible • Safe Zone"
+                                            overallPct >= 50f -> "Low Attendance • Warning"
+                                            else -> "Shortage Alert • Ineligible"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = overallColor,
+                                        softWrap = false,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.5.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = overallColor.copy(alpha = 0.14f),
-                                        border = BorderStroke(0.8.dp, overallColor.copy(alpha = 0.32f))
-                                    ) {
-                                        Text(
-                                            text = when {
-                                                overallTotal == 0 -> "No faculty marks yet"
-                                                overallPct >= 75f -> "Eligible (≥75%)"
-                                                overallPct >= 50f -> "Low (50-74%)"
-                                                else -> "Critical (<50%)"
-                                            },
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = overallColor,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                        )
-                                    }
                                 }
-                                Spacer(modifier = Modifier.height(2.dp))
+                                Spacer(modifier = Modifier.height(3.dp))
                                 Text(
                                     text = "Official Faculty-Recorded Attendance",
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }

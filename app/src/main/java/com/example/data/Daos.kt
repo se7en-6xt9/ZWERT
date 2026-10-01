@@ -257,6 +257,12 @@ interface AppDao {
     @Query("DELETE FROM official_classes WHERE courseId = :courseId")
     suspend fun deleteOfficialClassesByCourseId(courseId: String)
 
+    @Query("SELECT * FROM official_classes WHERE courseId = :courseId LIMIT 1")
+    suspend fun getOfficialClassByCourseId(courseId: String): OfficialClassEntity?
+
+    @Query("SELECT * FROM official_classes")
+    suspend fun getAllOfficialClassesSync(): List<OfficialClassEntity>
+
     @Query("DELETE FROM official_classes")
     suspend fun wipeOfficialClasses()
 
@@ -269,8 +275,17 @@ interface AppDao {
     @Query("SELECT * FROM official_attendance")
     fun getAllOfficialAttendance(): Flow<List<OfficialAttendanceEntity>>
 
+    @Query("SELECT * FROM official_attendance")
+    suspend fun getAllOfficialAttendanceSync(): List<OfficialAttendanceEntity>
+
+    @Query("DELETE FROM official_attendance WHERE id = :id")
+    suspend fun deleteOfficialAttendanceById(id: String)
+
     @Query("DELETE FROM official_attendance WHERE date = :date AND slotId = :slotId")
     suspend fun deleteOfficialAttendanceForSession(date: String, slotId: String)
+
+    @Query("DELETE FROM official_attendance WHERE courseId = :courseId")
+    suspend fun deleteOfficialAttendanceByCourseId(courseId: String)
 
     @Query("DELETE FROM official_attendance")
     suspend fun wipeOfficialAttendance()
@@ -289,6 +304,14 @@ interface AppDao {
 
     @Query("DELETE FROM attendance")
     suspend fun wipeAttendance()
+
+    @Transaction
+    suspend fun wipeStudentPersonalData() {
+        wipeCourses()
+        wipeStudents()
+        wipeScheduleSlots()
+        wipeAttendance()
+    }
 
     @Transaction
     suspend fun wipeAllData() {

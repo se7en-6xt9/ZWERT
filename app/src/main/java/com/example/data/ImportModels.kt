@@ -25,7 +25,9 @@ data class BatchImport(
     val section: String? = null,
     val location: String? = null,
     val weeklySchedule: List<ScheduleImport>? = null,
-    val students: List<StudentImport>? = null
+    val students: List<StudentImport>? = null,
+    val facultyName: String? = null,
+    val facultyEmail: String? = null
 )
 
 @JsonClass(generateAdapter = true)

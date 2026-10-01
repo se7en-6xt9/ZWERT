@@ -432,6 +432,10 @@ fun StudentDashboardContent(
                                                     isCancelled = isCancelled,
                                                     cancelNote = cancelNote,
                                                     subjectStats = subjectStats,
+                                                    onCardClick = {
+                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        navController.navigate("student_subject_detail/${oClass.courseId}")
+                                                    },
                                                     onViewAttendance = {
                                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                         navController.navigate("official_report")
@@ -1635,6 +1639,7 @@ fun EmptyStudentScheduleIllustration(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun OfficialGlassLectureCard(
     officialClass: com.example.data.OfficialClassEntity,
@@ -1644,6 +1649,7 @@ fun OfficialGlassLectureCard(
     isCancelled: Boolean = false,
     cancelNote: String = "",
     subjectStats: Pair<Int, Int>? = null,
+    onCardClick: () -> Unit = {},
     onViewAttendance: () -> Unit = {},
     onHide: () -> Unit = {}
 ) {
@@ -1655,6 +1661,48 @@ fun OfficialGlassLectureCard(
         Color(0xFFEC4899), // Pink
         Color(0xFF8B5CF6)  // Violet
     )
+
+    var showHideDialog by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
+
+    if (showHideDialog) {
+        AlertDialog(
+            onDismissRequest = { showHideDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.VisibilityOff,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text("Hide Official Class?", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Text(
+                    "Do you want to hide \"${officialClass.courseName}\" (${officialClass.startTime} - ${officialClass.endTime}) from your timetable?\n\nYou can unhide and restore it anytime in your Profile."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showHideDialog = false
+                        onHide()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Hide Class")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showHideDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     val isDarkTheme = isSystemInDarkTheme()
     val barColor = subjectColors[abs(officialClass.courseId.hashCode()) % subjectColors.size]
@@ -1669,6 +1717,14 @@ fun OfficialGlassLectureCard(
                 shape = RoundedCornerShape(24.dp),
                 spotColor = Color.Black.copy(alpha = 0.16f),
                 ambientColor = Color.Black.copy(alpha = 0.08f)
+            )
+            .clip(RoundedCornerShape(24.dp))
+            .combinedClickable(
+                onClick = { onCardClick() },
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    showHideDialog = true
+                }
             ),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = bgColor),
@@ -1767,7 +1823,7 @@ fun OfficialGlassLectureCard(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Button Area: Replaced with Faculty Name + "View Attendance" subtle link
+                // Button Area: Faculty Name + "View Combined Report" Action
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1777,29 +1833,55 @@ fun OfficialGlassLectureCard(
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.primary
                 ) {
-                    Column(
+                    Row(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(horizontal = 14.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val facultyText = officialClass.facultyName.ifBlank { "Faculty Instructor" }
-                        Text(
-                            text = facultyText,
-                            style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.5.sp),
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(1.dp))
-                        Text(
-                            text = "View Attendance",
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
-                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            val facultyText = officialClass.facultyName.ifBlank { "Faculty Instructor" }
+                            Text(
+                                text = facultyText,
+                                style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.5.sp),
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "Press & hold card to hide",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f)
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.18f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "View Report",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5.sp),
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Icon(
+                                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onPrimary
+                                )
+                            }
+                        }
                     }
                 }
             }

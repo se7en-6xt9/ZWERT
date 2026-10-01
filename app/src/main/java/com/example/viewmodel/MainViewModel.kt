@@ -1403,53 +1403,81 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun wipeAllMyData(onComplete: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
-                // 1. Always wipe local database first so UI reflects fresh state immediately
-                repository.wipeAllData()
-                _syncProgress.value = 0f
-                _syncStatusText.value = ""
-                
-                // 2. Attempt to wipe cloud data in the background (catch and log any errors, but don't fail)
+                val isStudent = _userProfile.value?.role?.equals("student", ignoreCase = true) == true
                 val currentAuth = auth
                 val currentFirestore = firestore
                 val uid = currentAuth?.currentUser?.uid ?: currentActiveUserId
-                if (currentFirestore != null && uid.isNotBlank()) {
-                    try {
-                        val batchesRef = currentFirestore.collection("users").document(uid).collection("batches")
-                        val batchDocs = batchesRef.get().await()
-                        for (batchDoc in batchDocs.documents) {
-                            val batchId = batchDoc.id
-                            try {
-                                val batchAttSnap = batchesRef.document(batchId).collection("attendance").get().await()
-                                for (attDoc in batchAttSnap.documents) {
-                                    attDoc.reference.delete().await()
-                                }
-                            } catch (_: Exception) {}
 
-                            try {
-                                val batchStudSnap = batchesRef.document(batchId).collection("students").get().await()
-                                for (studDoc in batchStudSnap.documents) {
-                                    studDoc.reference.delete().await()
-                                }
-                            } catch (_: Exception) {}
+                if (isStudent) {
+                    // Student wipeout: only personal attendance and self courses are wiped. Official faculty data remains isolated & read-only.
+                    repository.wipeStudentPersonalData()
+                    _syncProgress.value = 0f
+                    _syncStatusText.value = ""
+                } else {
+                    // Teacher wipeout: disconnect all students, erase student feeds for teacher's classes, and free memory
+                    if (currentFirestore != null && uid.isNotBlank()) {
+                        try {
+                            val batchesRef = currentFirestore.collection("users").document(uid).collection("batches")
+                            val batchDocs = batchesRef.get().await()
+                            for (batchDoc in batchDocs.documents) {
+                                val batchId = batchDoc.id
+                                try {
+                                    val batchStudSnap = batchesRef.document(batchId).collection("students").get().await()
+                                    for (studDoc in batchStudSnap.documents) {
+                                        val sEmail = studDoc.getString("email")?.trim()?.lowercase() ?: ""
+                                        if (sEmail.isNotBlank()) {
+                                            try {
+                                                val feedClasses = currentFirestore.collection("student_feed")
+                                                    .document(sEmail).collection("official_classes")
+                                                    .whereEqualTo("courseId", batchId).get().await()
+                                                for (cDoc in feedClasses.documents) {
+                                                    cDoc.reference.delete()
+                                                }
+                                            } catch (_: Exception) {}
+                                            try {
+                                                val feedAtt = currentFirestore.collection("student_feed")
+                                                    .document(sEmail).collection("attendance")
+                                                    .whereEqualTo("courseId", batchId).get().await()
+                                                for (aDoc in feedAtt.documents) {
+                                                    aDoc.reference.delete()
+                                                }
+                                            } catch (_: Exception) {}
+                                        }
+                                        studDoc.reference.delete().await()
+                                    }
+                                } catch (_: Exception) {}
 
-                            try {
-                                batchDoc.reference.delete().await()
-                            } catch (_: Exception) {}
+                                try {
+                                    val batchAttSnap = batchesRef.document(batchId).collection("attendance").get().await()
+                                    for (attDoc in batchAttSnap.documents) {
+                                        attDoc.reference.delete().await()
+                                    }
+                                } catch (_: Exception) {}
+
+                                try {
+                                    batchDoc.reference.delete().await()
+                                } catch (_: Exception) {}
+                            }
+
+                            val collections = listOf("students", "attendance", "attendance_records", "schedule_slots", "slots", "courses")
+                            for (collection in collections) {
+                                try {
+                                    val ref = currentFirestore.collection("users").document(uid).collection(collection)
+                                    val snapshot = ref.get().await()
+                                    for (doc in snapshot.documents) {
+                                        doc.reference.delete().await()
+                                    }
+                                } catch (_: Exception) {}
+                            }
+                        } catch (e: Exception) {
+                            Log.e("FirebaseSync", "Error wiping cloud data: ${e.message}")
                         }
-
-                        val collections = listOf("students", "attendance", "attendance_records", "schedule_slots", "slots", "courses")
-                        for (collection in collections) {
-                            try {
-                                val ref = currentFirestore.collection("users").document(uid).collection(collection)
-                                val snapshot = ref.get().await()
-                                for (doc in snapshot.documents) {
-                                    doc.reference.delete().await()
-                                }
-                            } catch (_: Exception) {}
-                        }
-                    } catch (e: Exception) {
-                        Log.e("FirebaseSync", "Error wiping cloud data: ${e.message}")
                     }
+
+                    // Complete database erase for teacher: free all memory and reset to fresh start
+                    repository.wipeAllData()
+                    _syncProgress.value = 0f
+                    _syncStatusText.value = ""
                 }
 
                 withContext(Dispatchers.Main) {
@@ -1806,10 +1834,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
 
-                    // Remove classes from enrolled students' feeds in Firestore
+                    // Remove classes and attendance from enrolled students' feeds in Firestore
                     enrolledStudents.forEach { st ->
                         val sEmail = st.email.trim().lowercase()
                         if (sEmail.isNotBlank()) {
+                            try {
+                                val feedClasses = currentFirestore.collection("student_feed").document(sEmail)
+                                    .collection("official_classes").whereEqualTo("courseId", courseId).get().await()
+                                for (cDoc in feedClasses.documents) {
+                                    cDoc.reference.delete()
+                                }
+                            } catch (_: Exception) {}
+
                             slots.forEach { slot ->
                                 try {
                                     val slotDocId = "slot_${courseId}_${normalizeDayName(slot.dayOfWeek)}_${slot.startTime}_${slot.endTime}".replace(Regex("[^a-zA-Z0-9_]"), "")
@@ -1819,6 +1855,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                         .collection("official_classes").document(slot.id).delete()
                                 } catch (_: Exception) {}
                             }
+                            try {
+                                val feedAtt = currentFirestore.collection("student_feed").document(sEmail)
+                                    .collection("attendance").whereEqualTo("courseId", courseId).get().await()
+                                for (doc in feedAtt.documents) {
+                                    doc.reference.delete()
+                                }
+                            } catch (_: Exception) {}
                         }
                     }
                 }
@@ -1827,6 +1870,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 repository.dao.deleteStudentsByCourseId(courseId)
                 repository.dao.deleteScheduleSlotsByCourseId(courseId)
                 repository.deleteOfficialClassesByCourseId(courseId)
+                repository.deleteOfficialAttendanceByCourseId(courseId)
                 
                 onComplete()
             } catch (e: Throwable) {
@@ -1841,6 +1885,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val course = repository.getCourseById(courseId) ?: return null
         val students = repository.getStudentsByCourseSync(courseId)
         val slots = repository.getScheduleSlotsForCourseSync(courseId)
+        val officialClass = repository.getOfficialClassByCourseId(courseId)
         
         val studentImports = students.map { s ->
             com.example.data.StudentImport(id = s.id, name = s.name, rollNumber = s.rollNumber, email = s.email)
@@ -1862,7 +1907,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             section = firstSlotSection,
             location = firstSlotLoc,
             weeklySchedule = scheduleImports,
-            students = studentImports
+            students = studentImports,
+            facultyName = officialClass?.facultyName,
+            facultyEmail = officialClass?.facultyEmail
         )
     }
 
@@ -1882,8 +1929,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Immediately insert these schedule slots into local official_classes so student feed reflects them instantly
                 val currentAuth = auth
-                val profName = currentAuth?.currentUser?.displayName?.takeIf { it.isNotBlank() } ?: "Prof. Rajesh Sharma"
-                val profEmail = currentAuth?.currentUser?.email?.takeIf { it.isNotBlank() } ?: "faculty@campus.edu"
+                val profName = updatedBatch.facultyName?.trim()?.takeIf { it.isNotBlank() }
+                    ?: _userProfile.value?.name?.trim()?.takeIf { it.isNotBlank() }
+                    ?: currentAuth?.currentUser?.displayName?.trim()?.takeIf { it.isNotBlank() }
+                    ?: "Faculty Instructor"
+                val profEmail = updatedBatch.facultyEmail?.trim()?.takeIf { it.isNotBlank() }
+                    ?: currentAuth?.currentUser?.email?.trim()?.takeIf { it.isNotBlank() }
+                    ?: "faculty@campus.edu"
                 val batchOfficialClasses = updatedBatch.weeklySchedule?.map { s ->
                     val rawDay = s.day ?: "Monday"
                     val day = when (rawDay.trim().lowercase()) {
@@ -1964,7 +2016,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         ),
                         "section" to (updatedBatch.section ?: ""),
                         "location" to (updatedBatch.location ?: ""),
-                        "weeklySchedule" to scheduleList
+                        "weeklySchedule" to scheduleList,
+                        "facultyName" to profName,
+                        "facultyEmail" to profEmail
                     )
                     try {
                         val setTask = batchRef.set(batchMeta)
@@ -2020,8 +2074,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                         "endTime" to end,
                                         "room" to loc,
                                         "section" to (updatedBatch.section ?: ""),
-                                        "facultyName" to (currentAuth?.currentUser?.displayName ?: "Prof. Rajesh Sharma"),
-                                        "facultyEmail" to (currentAuth?.currentUser?.email ?: "faculty@campus.edu")
+                                        "facultyName" to profName,
+                                        "facultyEmail" to profEmail
                                     )
                                     Log.d("ERPSync", "Attempting write to student_feed/$studentEmail/official_classes/$slotId")
                                     try {
@@ -3185,6 +3239,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         repository.getAllOfficialAttendance()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    fun getCurrentUserEmail(): String = auth?.currentUser?.email ?: "faculty@campus.edu"
+
     fun getStudentEmail(): String {
         val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
         val isDemo = prefs.getBoolean("is_demo_account", false)
@@ -3305,10 +3361,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun registerStudentFeedListeners(email: String) {
         val db = firestore ?: return
-        if (email.isBlank()) return
+        val cleanEmail = email.trim().lowercase()
+        if (cleanEmail.isBlank()) return
 
         studentFeedClassesListener?.remove()
-        studentFeedClassesListener = db.collection("student_feed").document(email)
+        studentFeedClassesListener = db.collection("student_feed").document(cleanEmail)
             .collection("official_classes")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -3320,16 +3377,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val classes = snapshot.documents.mapNotNull { doc ->
                             try { mapDocToOfficialClass(doc) } catch (_: Exception) { null }
                         }
-                        if (classes.isNotEmpty()) {
-                            repository.insertOfficialClasses(classes)
-                            Log.d("StudentFeedListener", "Live synced ${classes.size} official classes into local Room")
+                        if (classes.isEmpty()) {
+                            // If teacher deleted classes or wiped account, erase all official classes locally to free memory
+                            repository.wipeOfficialClasses()
+                            Log.d("StudentFeedListener", "Erased all official classes locally because cloud feed is empty (teacher deleted/wiped)")
+                        } else {
+                            // Reconcile: delete classes no longer present in cloud feed
+                            val existingLocal = repository.getAllOfficialClassesSync()
+                            val incomingIds = classes.map { it.slotId }.toSet()
+                            val toDelete = existingLocal.filter { it.slotId !in incomingIds }
+                            toDelete.forEach { repository.deleteOfficialClass(it.slotId) }
+
+                            // Retain local isHidden preference if student had already hidden this slot
+                            val merged = classes.map { incoming ->
+                                val local = existingLocal.find { it.slotId == incoming.slotId }
+                                if (local != null && local.isHidden) incoming.copy(isHidden = true) else incoming
+                            }
+                            repository.insertOfficialClasses(merged)
+                            Log.d("StudentFeedListener", "Live reconciled ${classes.size} official classes into local Room")
                         }
                     }
                 }
             }
 
         studentFeedAttendanceListener?.remove()
-        studentFeedAttendanceListener = db.collection("student_feed").document(email)
+        studentFeedAttendanceListener = db.collection("student_feed").document(cleanEmail)
             .collection("attendance")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -3341,9 +3413,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val records = snapshot.documents.mapNotNull { doc ->
                             try { mapDocToOfficialAttendance(doc) } catch (_: Exception) { null }
                         }
-                        if (records.isNotEmpty()) {
+                        if (records.isEmpty()) {
+                            // Erase local attendance if teacher deleted records or wiped
+                            repository.wipeOfficialAttendance()
+                            Log.d("StudentFeedListener", "Erased official attendance locally because cloud feed is empty")
+                        } else {
+                            val existingAtt = repository.getAllOfficialAttendanceSync()
+                            val incomingAttIds = records.map { it.id }.toSet()
+                            val toDeleteAtt = existingAtt.filter { it.id !in incomingAttIds }
+                            toDeleteAtt.forEach { repository.deleteOfficialAttendanceById(it.id) }
                             repository.insertOfficialAttendance(records)
-                            Log.d("StudentFeedListener", "Live synced ${records.size} attendance records into local Room")
+                            Log.d("StudentFeedListener", "Live reconciled ${records.size} attendance records into local Room")
                         }
                     }
                 }
@@ -3637,9 +3717,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun populateDemoOfficialClassesIfEmpty() {
         val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
         val isDemo = prefs.getBoolean("is_demo_account", false) || 
-                     getStudentEmail().trim().lowercase() == "student.demo@campus.edu" ||
-                     _userProfile.value?.role == "student" ||
-                     _userProfile.value?.role == "teacher"
+                     getStudentEmail().trim().lowercase() == "student.demo@campus.edu"
         if (!isDemo) return // STRICT DATA ISOLATION: Never run for real non-demo accounts!
 
         // 1. If slots are empty, load dummy initial demo data

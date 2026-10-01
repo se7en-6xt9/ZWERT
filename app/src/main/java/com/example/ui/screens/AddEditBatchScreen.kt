@@ -198,8 +198,19 @@ fun AddEditBatchScreen(
     val fieldGroup3Color = Color(0xFFF2E7FE) // Pink/Purple tint
     
     // Form state
+    val currentProfile by viewModel.userProfile.collectAsState()
+    val defaultTeacherName = remember(currentProfile) {
+        currentProfile?.name?.trim()?.takeIf { it.isNotBlank() }
+            ?: (viewModel.getCurrentUserEmail().takeIf { it.isNotBlank() }
+                ?.substringBefore("@")
+                ?.replace(".", " ")
+                ?.split(" ")
+                ?.joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } })
+            ?: ""
+    }
     var courseName by remember { mutableStateOf("") }
     var courseCode by remember { mutableStateOf("") }
+    var facultyName by remember(defaultTeacherName) { mutableStateOf(defaultTeacherName) }
     var year by remember { mutableStateOf("") }
     var semester by remember { mutableStateOf("") }
     var section by remember { mutableStateOf("") }
@@ -279,6 +290,7 @@ fun AddEditBatchScreen(
             if (batch != null) {
                 courseName = batch.course?.name ?: ""
                 courseCode = batch.course?.code ?: ""
+                facultyName = batch.facultyName ?: ""
                 year = batch.year ?: ""
                 semester = batch.semester ?: ""
                 section = batch.section ?: ""
@@ -443,6 +455,15 @@ fun AddEditBatchScreen(
                                     label = "Default Room (Optional)",
                                     modifier = Modifier.fillMaxWidth(),
                                     baseColor = colorScheme.background,
+                                    accentColor = accentColor,
+                                    haptic = haptic
+                                )
+                                AnimatedTextField(
+                                    value = facultyName,
+                                    onValueChange = { facultyName = it },
+                                    label = "Instructor / Faculty Name",
+                                    modifier = Modifier.fillMaxWidth(),
+                                    baseColor = fieldGroup1Color,
                                     accentColor = accentColor,
                                     haptic = haptic
                                 )
@@ -932,7 +953,9 @@ fun AddEditBatchScreen(
                                     section = section,
                                     location = defaultLocation,
                                     weeklySchedule = finalSchedules,
-                                    students = students
+                                    students = students,
+                                    facultyName = facultyName.trim().takeIf { it.isNotBlank() },
+                                    facultyEmail = viewModel.getCurrentUserEmail()
                                 )
                                 
                                 isLoading = true

@@ -119,12 +119,22 @@ fun StudentSubjectDetailScreen(
 ) {
     val isDarkTheme by viewModel.isDarkTheme.collectAsState()
     val courses by viewModel.getAllCourses().collectAsState(initial = emptyList())
+    val officialClasses by viewModel.activeOfficialClasses.collectAsState()
+    val officialAttendance by viewModel.officialAttendance.collectAsState()
+
     val course = courses.find { it.id == courseId } ?: CourseEntity(
         id = courseId,
         name = "Subject Details",
         code = "COURSE",
         credits = 4
     )
+    val officialClass = officialClasses.find { it.courseId == courseId }
+    val isOfficial = officialClass != null
+
+    val effectiveCourseName = if (course.name != "Subject Details") course.name else (officialClass?.courseName ?: "Subject Details")
+    val effectiveCourseCode = if (course.code != "COURSE") course.code else (officialClass?.courseCode ?: "COURSE")
+    val effectiveFaculty = officialClass?.facultyName?.takeIf { it.isNotBlank() } ?: "Faculty Instructor"
+
     val allSlots by viewModel.getScheduleSlotsForCourse(courseId).collectAsState(initial = emptyList())
     val allAttendance by viewModel.getAllAttendance().collectAsState(initial = emptyList())
 
@@ -140,14 +150,38 @@ fun StudentSubjectDetailScreen(
         }
     }
 
-    // Filter attendance records for this course only
-    val subjectAttendance = remember(allAttendance, courseId, allSlots) {
-        allAttendance.filter { rec ->
-            rec.studentId == "self" && (
-                allSlots.any { s -> s.id == rec.scheduleSlotId } ||
-                rec.scheduleSlotId.contains(courseId)
-            )
-        }.sortedByDescending { it.date }
+    // Filter attendance records for this course only (from official attendance feed if official course, or personal attendance)
+    val subjectAttendance = remember(allAttendance, officialAttendance, courseId, allSlots, isOfficial) {
+        if (isOfficial) {
+            val offList = officialAttendance.filter { it.courseId == courseId }
+            if (offList.isNotEmpty()) {
+                offList.map { off ->
+                    AttendanceRecordEntity(
+                        id = 0,
+                        studentId = "self",
+                        scheduleSlotId = off.slotId,
+                        courseId = off.courseId,
+                        date = off.date,
+                        status = off.status,
+                        markedAt = off.markedAt
+                    )
+                }.sortedByDescending { it.date }
+            } else {
+                allAttendance.filter { rec ->
+                    rec.studentId == "self" && (
+                        allSlots.any { s -> s.id == rec.scheduleSlotId } ||
+                        rec.scheduleSlotId.contains(courseId)
+                    )
+                }.sortedByDescending { it.date }
+            }
+        } else {
+            allAttendance.filter { rec ->
+                rec.studentId == "self" && (
+                    allSlots.any { s -> s.id == rec.scheduleSlotId } ||
+                    rec.scheduleSlotId.contains(courseId)
+                )
+            }.sortedByDescending { it.date }
+        }
     }
 
     val isCancelledRecord: (AttendanceRecordEntity) -> Boolean = { rec ->
@@ -257,16 +291,16 @@ fun StudentSubjectDetailScreen(
                 title = {
                     Column {
                         Text(
-                            text = course.name,
+                            text = effectiveCourseName,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        val code = course.code.ifBlank { "Subject" }
-                        val credits = if (course.credits > 0) " • ${course.credits} Credits" else ""
+                        val code = effectiveCourseCode.ifBlank { "Subject" }
+                        val facultySubtitle = if (isOfficial) " • $effectiveFaculty" else if (course.credits > 0) " • ${course.credits} Credits" else ""
                         Text(
-                            text = "$code$credits",
+                            text = "$code$facultySubtitle",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -464,14 +498,68 @@ fun StudentSubjectDetailScreen(
             else -> "Absent (A)"
         }
 
-        AlertDialog(
-            onDismissRequest = { recordToEdit = null },
-            title = {
-                Text(
-                    text = "Update Attendance",
-                    fontWeight = FontWeight.Bold
-                )
-            },
+        if (isOfficial) {
+            AlertDialog(
+                onDismissRequest = { recordToEdit = null },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = Color(0xFF6366F1),
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Official Faculty Record",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                },
+                text = {
+                    Column {
+                        Text(
+                            text = "Session on ${record.date}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Official Status: $currentStatusLabel",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isCurrentPresent) Color(0xFF10B981) else Color(0xFFEF4444)
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ) {
+                            Text(
+                                text = "This session was recorded directly by $effectiveFaculty in the official campus database. Official records are read-only and preserved safely.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = { recordToEdit = null }) {
+                        Text("Understood")
+                    }
+                }
+            )
+        } else {
+            AlertDialog(
+                onDismissRequest = { recordToEdit = null },
+                title = {
+                    Text(
+                        text = "Update Attendance",
+                        fontWeight = FontWeight.Bold
+                    )
+                },
             text = {
                 Column {
                     Text(
@@ -597,6 +685,7 @@ fun StudentSubjectDetailScreen(
                 }
             }
         )
+        }
     }
 }
 
@@ -671,10 +760,10 @@ fun SubjectHeroStatCard(
                     ) {
                         Text(
                             text = when {
-                                totalHeld == 0 -> "No sessions held"
-                                attendancePct >= 75f -> "Eligible (≥75%)"
-                                attendancePct >= 50f -> "Borderline (50-75%)"
-                                else -> "At Risk (<50%)"
+                                totalHeld == 0 -> "No Classes Held"
+                                attendancePct >= 75f -> "Exam Eligible • Safe"
+                                attendancePct >= 50f -> "Low Attendance • Warning"
+                                else -> "Shortage Alert • Ineligible"
                             },
                             color = statusColor,
                             fontWeight = FontWeight.ExtraBold,
