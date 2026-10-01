@@ -43,6 +43,12 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+
+        // Execute one-time master instance purge for fresh start testing
+        val prefs = getSharedPreferences("app_profile_prefs", MODE_PRIVATE)
+        if (!prefs.getBoolean("data_master_purge_v3", false)) {
+            viewModel.executeMasterInstancePurge()
+        }
         
         enableEdgeToEdge()
         setContent {

@@ -64,6 +64,7 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
     var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
     var selectedFileMimeType by remember { mutableStateOf<String?>(null) }
     var selectedFileName by remember { mutableStateOf("") }
+    var showApiKeyDialog by remember { mutableStateOf(false) }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -140,6 +141,11 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showApiKeyDialog = true }) {
+                        Icon(Icons.Default.Key, contentDescription = "Gemini API Key")
                     }
                 }
             )
@@ -359,11 +365,13 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
                             }
 
                             var errorMessage = "AI extraction could not be completed."
+                            val customKey = AiHelper.getSavedApiKey(context)
+                            val resolvedKey = customKey.ifBlank { com.example.BuildConfig.GEMINI_API_KEY }
                             val aiResult = try {
                                 AiHelper.parseTimetableData(
                                     rawText = rawText,
                                     image = selectedBitmap,
-                                    apiKey = com.example.BuildConfig.GEMINI_API_KEY,
+                                    apiKey = resolvedKey,
                                     fileBytes = fileBytes,
                                     fileMimeType = fileMime,
                                     userRole = userRole ?: "teacher"
@@ -385,6 +393,9 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
                             } else {
                                 isLoading = false
                                 Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                                if (errorMessage.contains("API key", ignoreCase = true) || errorMessage.contains("disabled", ignoreCase = true)) {
+                                    showApiKeyDialog = true
+                                }
                             }
                         }
                     },
@@ -406,6 +417,52 @@ fun ImportTimetableScreen(navController: NavController, viewModel: MainViewModel
                 Spacer(modifier = Modifier.height(32.dp))
             }
         }
+    }
+
+    if (showApiKeyDialog) {
+        var tempKey by remember { mutableStateOf(AiHelper.getSavedApiKey(context)) }
+        AlertDialog(
+            onDismissRequest = { showApiKeyDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Key, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Gemini API Key", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Enter your Gemini API key from Google AI Studio (free). This powers AI timetable and document scanning.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = tempKey,
+                        onValueChange = { tempKey = it },
+                        label = { Text("API Key (AIzaSy...)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        AiHelper.saveApiKey(context, tempKey.trim())
+                        showApiKeyDialog = false
+                        Toast.makeText(context, "API Key saved successfully", Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text("Save Key")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showApiKeyDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 

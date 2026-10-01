@@ -1,5 +1,6 @@
 package com.example.viewmodel
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.util.Base64
 import android.util.Log
@@ -11,20 +12,60 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
+import java.util.zip.ZipInputStream
 
 object AiHelper {
     private const val TAG = "AiHelper"
-    private val CANDIDATE_MODELS = listOf("gemini-3.5-flash", "gemini-2.5-flash")
-    // User-provided Gemini API key fallback
-    const val DEFAULT_API_KEY = "AIzaSyDwM0mgO8we85qwh3Uq8QQoQdF1W8oyNBA"
+    // Modern supported Gemini models; removed discontinued gemini-2.5-flash
+    private val CANDIDATE_MODELS = listOf(
+        "gemini-3.8-flash",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-flash-latest"
+    )
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
+
+    fun getSavedApiKey(context: Context): String {
+        val prefs = context.getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+        return prefs.getString("custom_gemini_api_key", "") ?: ""
+    }
+
+    fun saveApiKey(context: Context, key: String) {
+        val prefs = context.getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("custom_gemini_api_key", key.trim()).apply()
+    }
+
+    private fun extractTextFromDocx(bytes: ByteArray): String? {
+        return try {
+            val bais = ByteArrayInputStream(bytes)
+            val zis = ZipInputStream(bais)
+            var entry = zis.nextEntry
+            val textBuilder = StringBuilder()
+            while (entry != null) {
+                if (entry.name == "word/document.xml") {
+                    val xml = zis.bufferedReader(Charsets.UTF_8).readText()
+                    val regex = Regex("<w:t[^>]*>(.*?)</w:t>")
+                    regex.findAll(xml).forEach { match ->
+                        textBuilder.append(match.groupValues[1]).append(" ")
+                    }
+                    break
+                }
+                entry = zis.nextEntry
+            }
+            zis.close()
+            textBuilder.toString().trim().takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     suspend fun parseTimetableData(
         rawText: String,
@@ -36,9 +77,9 @@ object AiHelper {
     ): String? {
         return withContext(Dispatchers.IO) {
             val resolvedApiKey = when {
-                apiKey.isNotBlank() && apiKey != "YOUR_API_KEY_HERE" -> apiKey.trim()
-                com.example.BuildConfig.GEMINI_API_KEY.isNotBlank() && com.example.BuildConfig.GEMINI_API_KEY != "YOUR_API_KEY_HERE" -> com.example.BuildConfig.GEMINI_API_KEY.trim()
-                else -> DEFAULT_API_KEY
+                apiKey.isNotBlank() && apiKey != "YOUR_API_KEY_HERE" && !apiKey.contains("AIzaSyDwM0mg") -> apiKey.trim()
+                com.example.BuildConfig.GEMINI_API_KEY.isNotBlank() && com.example.BuildConfig.GEMINI_API_KEY != "YOUR_API_KEY_HERE" && !com.example.BuildConfig.GEMINI_API_KEY.contains("AIzaSyDwM0mg") -> com.example.BuildConfig.GEMINI_API_KEY.trim()
+                else -> apiKey.trim().ifBlank { com.example.BuildConfig.GEMINI_API_KEY.trim() }
             }
 
             val roleGuidance = if (userRole.equals("student", ignoreCase = true)) {
@@ -145,8 +186,49 @@ object AiHelper {
             // Construct JSON request body for Gemini REST API
             val partsArray = JSONArray()
 
+            var extractedDocText = ""
+            if (fileBytes != null && fileBytes.isNotEmpty()) {
+                val isDocx = fileBytes.size > 4 && fileBytes[0] == 'P'.code.toByte() && fileBytes[1] == 'K'.code.toByte()
+                val isPdf = fileBytes.size > 4 && fileBytes[0] == '%'.code.toByte() && fileBytes[1] == 'P'.code.toByte() && fileBytes[2] == 'D'.code.toByte() && fileBytes[3] == 'F'.code.toByte()
+
+                if (isDocx) {
+                    val docxText = extractTextFromDocx(fileBytes)
+                    if (!docxText.isNullOrBlank()) {
+                        extractedDocText = "\n\n[Attached Word Document Content]:\n$docxText"
+                    }
+                } else if (isPdf || (fileMimeType?.contains("pdf", ignoreCase = true) == true)) {
+                    try {
+                        val base64Doc = Base64.encodeToString(fileBytes, Base64.NO_WRAP)
+                        val inlineData = JSONObject()
+                            .put("mimeType", "application/pdf")
+                            .put("data", base64Doc)
+                        partsArray.put(JSONObject().put("inlineData", inlineData))
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to encode PDF to base64", e)
+                    }
+                } else if (fileMimeType?.startsWith("image/", ignoreCase = true) == true) {
+                    try {
+                        val base64Image = Base64.encodeToString(fileBytes, Base64.NO_WRAP)
+                        val inlineData = JSONObject()
+                            .put("mimeType", fileMimeType)
+                            .put("data", base64Image)
+                        partsArray.put(JSONObject().put("inlineData", inlineData))
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to encode image to base64", e)
+                    }
+                } else {
+                    try {
+                        val txt = String(fileBytes, Charsets.UTF_8).trim()
+                        if (txt.isNotBlank() && txt.all { it.code in 9..126 || it.code in 160..65535 }) {
+                            extractedDocText = "\n\n[Attached File Content]:\n$txt"
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
             // 1. Text input
-            val promptText = rawText.ifBlank { "Extract timetable and schedule from this input." }
+            val basePrompt = rawText.ifBlank { "Extract timetable and schedule from this input." }
+            val promptText = basePrompt + extractedDocText
             val textPart = JSONObject().put("text", promptText)
             partsArray.put(textPart)
 
@@ -162,19 +244,6 @@ object AiHelper {
                     partsArray.put(JSONObject().put("inlineData", inlineData))
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to encode image to base64", e)
-                }
-            }
-
-            // 3. Document / PDF input (if provided)
-            if (fileBytes != null && fileMimeType != null) {
-                try {
-                    val base64Doc = Base64.encodeToString(fileBytes, Base64.NO_WRAP)
-                    val inlineData = JSONObject()
-                        .put("mimeType", fileMimeType)
-                        .put("data", base64Doc)
-                    partsArray.put(JSONObject().put("inlineData", inlineData))
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to encode file to base64", e)
                 }
             }
 
@@ -211,8 +280,20 @@ object AiHelper {
                     val responseBody = response.body?.string() ?: ""
 
                     if (!response.isSuccessful) {
-                        val errMsg = "Gemini API HTTP ${response.code} ($model): $responseBody"
-                        Log.e(TAG, errMsg)
+                        var parsedMessage = ""
+                        try {
+                            val errJson = JSONObject(responseBody).optJSONObject("error")
+                            parsedMessage = errJson?.optString("message") ?: ""
+                        } catch (_: Exception) {}
+
+                        val errMsg = when {
+                            response.code == 404 -> "Model $model is no longer available (404)."
+                            response.code == 403 && (parsedMessage.contains("leaked", ignoreCase = true) || parsedMessage.contains("disabled", ignoreCase = true) || parsedMessage.contains("API key", ignoreCase = true)) ->
+                                "Gemini API key is invalid or Generative Language API is disabled. Please configure a valid Gemini API key."
+                            parsedMessage.isNotBlank() -> parsedMessage
+                            else -> "Gemini API HTTP ${response.code} ($model)"
+                        }
+                        Log.e(TAG, "Gemini call failed for $model: $errMsg")
                         lastError = errMsg
                         continue
                     }
@@ -247,7 +328,7 @@ object AiHelper {
                         Log.d(TAG, "Gemini timetable extraction successful! Length: ${textOutput.length}")
                         return@withContext textOutput
                     } else {
-                        lastError = "Invalid JSON in output ($model): $textOutput"
+                        lastError = "Invalid JSON structure in AI output ($model)"
                     }
                 } catch (e: Exception) {
                     lastError = e.message ?: "Network error"
@@ -256,7 +337,13 @@ object AiHelper {
             }
 
             Log.e(TAG, "All extraction attempts failed. Last error: $lastError")
-            throw Exception(lastError ?: "Failed to extract timetable data from Gemini.")
+            val userFriendlyError = when {
+                lastError?.contains("API key", ignoreCase = true) == true -> lastError!!
+                lastError?.contains("404", ignoreCase = true) == true || lastError?.contains("no longer available", ignoreCase = true) == true ->
+                    "AI service unavailable. Please check your Gemini API key."
+                else -> lastError ?: "Failed to extract schedule with AI. Please check your connection."
+            }
+            throw Exception(userFriendlyError)
         }
     }
 }

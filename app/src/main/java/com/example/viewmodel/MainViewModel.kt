@@ -1491,6 +1491,124 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun executeMasterInstancePurge(onComplete: (() -> Unit)? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                Log.d("MasterPurge", "Starting complete master instance purge...")
+                val currentFirestore = firestore
+                val currentAuth = auth
+                val uid = currentAuth?.currentUser?.uid
+
+                // 1. Delete all Firestore teacher batches, student feeds, profiles
+                if (currentFirestore != null) {
+                    if (!uid.isNullOrBlank()) {
+                        try {
+                            val batchesRef = currentFirestore.collection("users").document(uid).collection("batches")
+                            val batchDocs = batchesRef.get().await()
+                            for (batchDoc in batchDocs.documents) {
+                                val batchId = batchDoc.id
+                                try {
+                                    val studentsSnap = batchesRef.document(batchId).collection("students").get().await()
+                                    for (studDoc in studentsSnap.documents) {
+                                        val sEmail = studDoc.getString("email")?.trim()?.lowercase() ?: ""
+                                        if (sEmail.isNotBlank()) {
+                                            try {
+                                                val fClasses = currentFirestore.collection("student_feed").document(sEmail).collection("official_classes").get().await()
+                                                for (cd in fClasses.documents) cd.reference.delete()
+                                                val fAtt = currentFirestore.collection("student_feed").document(sEmail).collection("attendance").get().await()
+                                                for (ad in fAtt.documents) ad.reference.delete()
+                                            } catch (_: Exception) {}
+                                        }
+                                        studDoc.reference.delete()
+                                    }
+                                } catch (_: Exception) {}
+
+                                try {
+                                    val attSnap = batchesRef.document(batchId).collection("attendance").get().await()
+                                    for (ad in attSnap.documents) ad.reference.delete()
+                                } catch (_: Exception) {}
+                                batchDoc.reference.delete()
+                            }
+                        } catch (e: Exception) {
+                            Log.e("MasterPurge", "Error purging batches: ${e.message}")
+                        }
+
+                        // Purge other user subcollections
+                        val userColls = listOf("students", "attendance", "attendance_records", "schedule_slots", "slots", "courses", "profile", "timetables")
+                        for (col in userColls) {
+                            try {
+                                val snap = currentFirestore.collection("users").document(uid).collection(col).get().await()
+                                for (d in snap.documents) d.reference.delete()
+                            } catch (_: Exception) {}
+                        }
+                    }
+
+                    // Known / demo student feeds purge
+                    val knownFeeds = listOf(
+                        "student.demo@campus.edu",
+                        "aman.kumar@campus.edu",
+                        getStudentEmail().trim().lowercase()
+                    ).filter { it.isNotBlank() }.distinct()
+
+                    for (feedEmail in knownFeeds) {
+                        try {
+                            val fClasses = currentFirestore.collection("student_feed").document(feedEmail).collection("official_classes").get().await()
+                            for (cd in fClasses.documents) cd.reference.delete()
+                            val fAtt = currentFirestore.collection("student_feed").document(feedEmail).collection("attendance").get().await()
+                            for (ad in fAtt.documents) ad.reference.delete()
+                        } catch (_: Exception) {}
+                    }
+                }
+
+                // 2. Wipe all local Room tables
+                repository.wipeAllData()
+                repository.wipeOfficialClasses()
+                repository.wipeOfficialAttendance()
+
+                // Also wipe SQLite database files
+                try {
+                    val context = getApplication<Application>()
+                    context.databaseList()?.forEach { dbName ->
+                        if (dbName.endsWith(".db")) {
+                            context.deleteDatabase(dbName)
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                // 3. Clear SharedPreferences
+                val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+                prefs.edit().clear().putBoolean("data_master_purge_v3", true).apply()
+
+                // 4. Sign out Firebase Auth
+                try {
+                    currentAuth?.signOut()
+                } catch (_: Exception) {}
+
+                // 5. Reset ViewModel StateFlows
+                studentFeedClassesListener?.remove()
+                studentFeedAttendanceListener?.remove()
+                studentFeedClassesListener = null
+                studentFeedAttendanceListener = null
+
+                _currentUserEmail.value = ""
+                _userRole.value = ""
+                _userProfile.value = null
+                _isFaculty.value = false
+                _authState.value = false
+                _syncProgress.value = 0f
+                _syncStatusText.value = ""
+
+                Log.d("MasterPurge", "Master purge completed successfully.")
+            } catch (e: Exception) {
+                Log.e("MasterPurge", "Error during master purge", e)
+            } finally {
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke()
+                }
+            }
+        }
+    }
+
     fun initDemoProfileIfNeeded() {
         val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
         val defaultName = "Prof. Rajesh Sharma"
@@ -3245,25 +3363,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
         val isDemo = prefs.getBoolean("is_demo_account", false)
         val saved = prefs.getString("profile_email", null)?.trim()?.lowercase()
-        val role = prefs.getString("profile_role", null) ?: prefs.getString("user_role", null)
+        val authEmail = auth?.currentUser?.email?.trim()?.lowercase()
 
-        // 1. If running as demo account, default to official demo student email unless customized
-        if (isDemo && (saved.isNullOrBlank() || saved == "student.demo@campus.edu")) {
-            return "student.demo@campus.edu"
+        // 1. If explicitly running in demo mode
+        if (isDemo) {
+            return if (!saved.isNullOrBlank() && saved != "student.demo@campus.edu") saved else "student.demo@campus.edu"
         }
 
-        // 2. If student saved a specific campus email in preferences, prioritize it
-        if (!saved.isNullOrBlank()) return saved
+        // 2. Real account: Prioritize authentic Firebase Auth email
+        if (!authEmail.isNullOrBlank()) {
+            return authEmail
+        }
 
-        // 3. Demo account fallback
-        if (isDemo) return "student.demo@campus.edu"
-
-        // 4. If current role is student and nothing configured, default to demo student
-        if (role == "student") return "student.demo@campus.edu"
-
-        // 5. Auth email fallback
-        val authEmail = auth?.currentUser?.email?.trim()?.lowercase()
-        if (!authEmail.isNullOrBlank()) return authEmail
+        // 3. Prioritize explicitly saved campus profile email
+        if (!saved.isNullOrBlank()) {
+            return saved
+        }
 
         return ""
     }
@@ -3433,21 +3548,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun syncOfficialClassesFromLocalSlots(): Int {
         try {
             val email = getStudentEmail().trim().lowercase()
+            val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+            val isDemo = prefs.getBoolean("is_demo_account", false) || email == "student.demo@campus.edu"
+            
+            if (email.isBlank() && !isDemo) return 0
             val cleanEmail = if (email.isNotBlank()) email else "student.demo@campus.edu"
-            val isDemo = cleanEmail == "student.demo@campus.edu" || cleanEmail.contains("demo") || cleanEmail.contains("aman")
 
             // 1. Gather all matching student enrollments in local DB
             val allStudents = repository.getAllStudentsSync()
             val matchingStudents = allStudents.filter { s ->
                 val sEmail = s.email.trim().lowercase()
-                val sName = s.name.trim().lowercase()
                 val sRoll = s.rollNumber.trim().lowercase()
-                (cleanEmail.isNotBlank() && sEmail == cleanEmail) ||
-                (cleanEmail.isNotBlank() && cleanEmail.contains(sRoll) && sRoll.isNotBlank()) ||
-                (isDemo && (sEmail == "student.demo@campus.edu" || sEmail.contains("demo") || sName.contains("aman") || sRoll == "24bcs001")) ||
-                (sEmail == "student.demo@campus.edu") ||
-                (sName == "aman kumar") ||
-                (sRoll == "24bcs001")
+                if (isDemo) {
+                    sEmail == "student.demo@campus.edu" || sEmail.contains("demo") || sRoll == "24bcs001"
+                } else {
+                    (cleanEmail.isNotBlank() && sEmail == cleanEmail) ||
+                    (cleanEmail.isNotBlank() && cleanEmail.contains(sRoll) && sRoll.isNotBlank())
+                }
             }.toMutableList()
 
             if (matchingStudents.isNotEmpty()) {
@@ -3495,8 +3612,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun syncOfficialStudentFeed(onResult: ((message: String, isSuccess: Boolean) -> Unit)? = null) {
         viewModelScope.launch {
             val email = getStudentEmail().trim().lowercase()
+            val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
+            val isDemo = prefs.getBoolean("is_demo_account", false) || email == "student.demo@campus.edu"
+            if (email.isBlank() && !isDemo) {
+                onResult?.invoke("No student email configured. Please login or set your campus email in Profile.", false)
+                return@launch
+            }
             val cleanEmail = if (email.isNotBlank()) email else "student.demo@campus.edu"
-            Log.d("ERPSync", "Student syncFeed: starting sync for email: $cleanEmail")
+            Log.d("ERPSync", "Student syncFeed: starting sync for email: $cleanEmail, isDemo: $isDemo")
             
             // 1. Sync from local database (guarantee timetable classes are always available in official feed)
             val localCount = syncOfficialClassesFromLocalSlots()
@@ -3505,13 +3628,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val allStudents = repository.getAllStudentsSync()
                 val matchingStudents = allStudents.filter { s ->
                     val sEmail = s.email.trim().lowercase()
-                    val sName = s.name.trim().lowercase()
                     val sRoll = s.rollNumber.trim().lowercase()
-                    (cleanEmail.isNotBlank() && sEmail == cleanEmail) ||
-                    (cleanEmail == "student.demo@campus.edu" && (sEmail == "student.demo@campus.edu" || sEmail.contains("demo") || sName.contains("aman") || sRoll == "24bcs001")) ||
-                    (sEmail == "student.demo@campus.edu") ||
-                    (sName == "aman kumar") ||
-                    (sRoll == "24bcs001")
+                    if (isDemo) {
+                        sEmail == "student.demo@campus.edu" || sEmail.contains("demo") || sRoll == "24bcs001"
+                    } else {
+                        (cleanEmail.isNotBlank() && sEmail == cleanEmail) ||
+                        (cleanEmail.isNotBlank() && cleanEmail.contains(sRoll) && sRoll.isNotBlank())
+                    }
                 }
                 if (matchingStudents.isNotEmpty()) {
                     val attToInsert = mutableListOf<com.example.data.OfficialAttendanceEntity>()
@@ -3548,9 +3671,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             if (db != null && cleanEmail.isNotBlank()) {
                 val targetEmails = mutableSetOf(cleanEmail)
-                if (cleanEmail == "student.demo@campus.edu" || cleanEmail.contains("aman") || cleanEmail.contains("demo")) {
+                if (isDemo) {
                     targetEmails.add("student.demo@campus.edu")
-                    targetEmails.add("aman.kumar@campus.edu")
                 }
 
                 for (targetEmail in targetEmails) {
@@ -3611,13 +3733,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         try {
             val prefs = getApplication<Application>().getSharedPreferences("app_profile_prefs", Context.MODE_PRIVATE)
             val isDemo = prefs.getBoolean("is_demo_account", false) || 
-                         getStudentEmail().trim().lowercase() == "student.demo@campus.edu" ||
-                         _userProfile.value?.role == "student" ||
-                         _userProfile.value?.role == "teacher"
+                         getStudentEmail().trim().lowercase() == "student.demo@campus.edu"
 
             val currentEmail = getStudentEmail().trim().lowercase()
             // STRICT DATA ISOLATION: Never seed demo attendance into non-demo personal accounts
-            if (!isDemo && currentEmail.isNotBlank() && currentEmail != "student.demo@campus.edu") {
+            if (!isDemo || currentEmail != "student.demo@campus.edu") {
                 return
             }
 
